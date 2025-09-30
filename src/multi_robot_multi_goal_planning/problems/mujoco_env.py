@@ -868,93 +868,118 @@ class MjxEnv(MujocoEnvironment):
         #     if self.data.contact[i].dist < self.collision_tolerance:
         #         return False
 
+         # Pre-compile all operations to avoid recompilation cache misses
         self.jit_fwd = jax.jit(mjx.forward)
         self.jit_step = jax.jit(mjx.step)
-
-        self.jit_fwd(self.mjx_model, self.mjx_data)
-
-        # Pre-jit batch function once
-        self._batched_check = jax.jit(
-            jax.vmap(self._check_single, in_axes=(0,))
+        
+        # Pre-compile single collision check
+        self._jit_single_check = jax.jit(self._check_single_pure)
+        
+        # Pre-compile batch operations with fixed signatures
+        self._jit_batch_check = jax.jit(
+            jax.vmap(self._check_single_pure, in_axes=(None, 0))
         )
-    
-    def _check_single(self, qpos):
-        """Pure function: single configuration collision check."""
-        d = self.mjx_data.replace(
-            qpos = self.mjx_data.qpos.at[self._all_robot_idx].set(qpos)
-        )
-        # d = mjx.step(self.mjx_model, d)
-        d = self.jit_fwd(self.mjx_model, d)
-        return jax.numpy.logical_not(jax.numpy.any(d.contact.dist < -self.collision_tolerance))
+        
+        # Warm up JIT compilation
+        # dummy_q = jax.numpy.zeros(len(self._all_robot_idx))
+        # self._jit_single_check(self.mjx_model, dummy_q)
+        
+        # Pre-allocate reusable data structure to reduce allocations
+        self._temp_data = self.mjx_data
+
+    def _check_single_pure(self, model, qpos):
+        """Pure function: single configuration collision check.
+        This function signature is stable for JIT compilation."""
+        # Create minimal data update - more cache friendly
+        base_qpos = self.mjx_data.qpos
+        updated_qpos = base_qpos.at[self._all_robot_idx].set(qpos)
+        
+        # Use replace only when necessary
+        temp_data = self.mjx_data.replace(qpos=updated_qpos)
+        
+        # Forward pass
+        temp_data = self.jit_fwd(model, temp_data)
+        
+        # Check collision - use logical operations for better vectorization
+        has_collision = jax.numpy.any(temp_data.contact.dist < -self.collision_tolerance)
+        return jax.numpy.logical_not(has_collision)
 
     def check(self, qposes):
+        """Optimized batch collision checking."""
         qposes = jax.numpy.atleast_2d(qposes)
-        results = self._batched_check(qposes)
-        return results if results.shape[0] > 1 else results[0]
+        
+        if qposes.shape[0] == 1:
+            # Single check - avoid batch overhead
+            result = self._jit_single_check(self.mjx_model, qposes[0])
+            return result
+        else:
+            # Batch check
+            results = self._jit_batch_check(self.mjx_model, qposes)
+            return results
 
     def _batch_is_collision_free_optimized(self, qs):
-        print("A")
-        print(len(qs))
-        coll_free_batch = self.check(jax.numpy.stack(qs))
-        print("B")
-        return jax.numpy.all(coll_free_batch)
-
-        # qs = jax.numpy.stack(qs)  # shape (batch_size, n_dof)
-        # n_qs = qs.shape[0]
-
-        # # If qs smaller than pre-batched, slice
-        # if n_qs <= self.n_batch:
-        #     batch_data = jax.tree.map(lambda x: x[:n_qs], self.mjx_batch)
-        # else:
-        #     # Otherwise, replicate base data to create a new batch
-        #     batch_data = jax.tree.map(lambda x: jax.numpy.broadcast_to(x, (n_qs,) + x.shape[1:]), self.mjx_data)
-
-        # # Replace qpos
-        # batch_data = batch_data.replace(qpos=qs)
-
-        # # Forward and collision check
-        # batch_forward = jax.vmap(lambda d: mjx.forward(self.mjx_model, d))
-        # batch_data = batch_forward(batch_data)
-
-        # def is_free(d):
-        #     return jax.numpy.all(d.contact.dist >= self.collision_tolerance)
-
-        # batch_is_free = jax.vmap(is_free)(batch_data)
-        # return batch_is_free
-    
-    def _sequential_collision_check(self, qs):
-        for q in qs:
-            # TODO: deal with set to scenegraph
-            assert not self.manipulating_env
-    
-            self.mjx_data = self.mjx_data.replace(
-                qpos = self.mjx_data.qpos.at[self._all_robot_idx].set(q)
-            )
-            # _ = self.mjx_data.qvel.at[0].set(0)
+        """Optimized batch collision free check."""
+        if not qs:
+            return True
             
-            # self.jit_step(self.mjx_model, self.mjx_data)
-            self.jit_fwd(self.mjx_model, self.mjx_data)
+        # Convert to JAX array once
+        qs_array = jax.numpy.stack(qs)
+        
+        print("B")
+        
+        # Use batch check
+        collision_free_results = self.check(qs_array)
 
-            if self.mjx_data.ncon > 0:  # optional, avoid empty contact array
-                if jax.numpy.any(self.mjx_data.contact.dist < -self.collision_tolerance):
+        print("A")
+        
+        # Single reduction operation
+        return jax.numpy.all(collision_free_results)
+
+    def _sequential_collision_check(self, qs):
+        """Optimized sequential check - avoid unnecessary data mutations."""
+        base_qpos = self.mjx_data.qpos
+        
+        for q in qs:
+            assert not self.manipulating_env
+            
+            # Update qpos in-place style operation
+            updated_qpos = base_qpos.at[self._all_robot_idx].set(q)
+            temp_data = self._temp_data.replace(qpos=updated_qpos)
+            
+            # Forward pass
+            temp_data = self.jit_fwd(self.mjx_model, temp_data)
+            
+            # Early exit on collision
+            if temp_data.ncon > 0:
+                if jax.numpy.any(temp_data.contact.dist < -self.collision_tolerance):
                     return False
+                    
         return True
 
     def is_collision_free(self, q: Optional[Configuration], mode: Optional[Mode]):
+        """Fixed single collision check."""
         assert not self.manipulating_env
-        data = self.mjx_data.replace(
-            qpos = self.mjx_data.qpos.at[self._all_robot_idx].set(q.state())
-        )
-        # _ = self.mjx_data.qvel.at[0].set(0)
         
-        # self.jit_step(self.mjx_model, self.mjx_data)
-        self.jit_fwd(self.mjx_model, data)
+        q_state = q.state()
+        
+        # Use the pre-compiled single check function
+        return self._jit_single_check(self.mjx_model, q_state)
 
-        if self.mjx_data.ncon > 0:  # optional, avoid empty contact array
-            if jax.numpy.any(data.contact.dist < -self.collision_tolerance):
-                return False
+    # def is_collision_free(self, q: Optional[Configuration], mode: Optional[Mode]):
+    #     assert not self.manipulating_env
+    #     data = self.mjx_data.replace(
+    #         qpos = self.mjx_data.qpos.at[self._all_robot_idx].set(q.state())
+    #     )
+    #     # _ = self.mjx_data.qvel.at[0].set(0)
+        
+    #     # self.jit_step(self.mjx_model, self.mjx_data)
+    #     self.jit_fwd(self.mjx_model, data)
+
+    #     if self.mjx_data.ncon > 0:  # optional, avoid empty contact array
+    #         if jax.numpy.any(data.contact.dist < -self.collision_tolerance):
+    #             return False
             
-        return True
+    #     return True
 
     def is_edge_collision_free(
         self,
