@@ -118,12 +118,22 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
 
     self.ee_name = ee_name
 
-  def step(self, t, q, env):
+  def _get_desired_position_at_time(self, t):
+    return self.line_start_pos + t * (self.line_goal_pos - self.line_start_pos)
+
+  def step(self, t, q, env, dt=0.1):
     # look up where we are on the trajctory and get next position
-    # compute control input -> pose is free/might be constrained
-    # integrate
-    # return pt
-    raise NotImplementedError
+    env.C.setJointState(q)
+
+    desired_position = self._get_desired_position_at_time(t)
+    [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
+    
+    # compute pid law
+    q_dot = np.linalg.pinv(jac) @ err
+
+    # integrate to get next pos
+    q_new = q - dt * q_dot
+    return q_new
 
 # cool because it includes multiple robots.
 class DualRobotGrasping(BaseDeterministicTimedSkill):

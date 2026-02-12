@@ -1,11 +1,11 @@
 from multi_robot_multi_goal_planning.problems import get_env_by_name
-from multi_robot_multi_goal_planning.problems.skills import EEPositionGoalReaching, EEPoseGoalReaching
+from multi_robot_multi_goal_planning.problems.skills import EEPositionGoalReaching, EEPoseGoalReaching, EndEffectorPositionFollowing
 
 
 import numpy as np
 import random
 
-def main():
+def base_skill():
     np.random.seed(0)
     random.seed(0)
     
@@ -20,5 +20,22 @@ def main():
       env.C.setJointState(qnew)
       env.C.view(True)
 
+def timed_skill():
+    np.random.seed(0)
+    random.seed(0)
+    
+    env = get_env_by_name("rai.single_stick_upright")
+
+    curr_ee_pos = env.C.getFrame("a1_stick_ee").getPosition()
+    ee_reaching_skill = EndEffectorPositionFollowing(curr_ee_pos, curr_ee_pos + np.array([0, 0, -0.5]), "a1_stick_ee")
+    
+    N = 100
+    for i in range(N):
+      qnew = ee_reaching_skill.step(i / N, env.C.getJointState(), env)
+
+      env.C.setJointState(qnew)
+      env.C.view(True)
+
 if __name__ == "__main__":
-    main()
+    # base_skill()
+    timed_skill()
