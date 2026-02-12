@@ -1,4 +1,7 @@
+import numpy as np
+
 from abc import ABC, abstractmethod
+import robotic
 
 # abstract class for skills.
 class DeterministicBaseSkill(ABC):
@@ -37,41 +40,42 @@ class BaseStochasticTimedSkill(ABC):
   def step(self, q, t, env):
     raise NotImplementedError
 
-class EEPoseGoalReaching(DeterministicBaseSkill):
+class EEPositionGoalReaching(DeterministicBaseSkill):
   def __init__(self, goal, ee_name):
-    self.goal = goal
+    self.goal_position = goal
     self.ee_name = ee_name
 
-  def step(self, q, env):
+    self.kp = 1
+    self.kd = 0
+
+  def step(self, q, env, dt=0.1):
     # get jacobian
-    jac = 0
+    env.C.setJointState(q)
+    [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, self.goal_position)
     
     # compute pid law
-    current_ee_pose = 0
-    error = self.goal - current_ee_pose
-    q_dot = jac @ error
+    q_dot = np.linalg.pinv(jac) @ err
 
     # integrate to get next pos
-    q_new = q + dt * q_dot
+    q_new = q - dt * q_dot
     return q_new
 
 # simple pid controller
-class EEPositionGoalReaching(DeterministicBaseSkill):
+class EEPoseGoalReaching(DeterministicBaseSkill):
   def __init__(self, goal, ee_name):
-    self.goal = goal
+    self.goal_pose = goal
     self.ee_name = ee_name
 
-  def step(self, q, env):
+  def step(self, q, env, dt=0.1):
     # get jacobian
-    jac = 0
+    env.C.setJointState(q)
+    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
     
     # compute pid law
-    current_ee_pos = 0
-    error = self.goal - current_ee_pos
-    q_dot = jac @ error
+    q_dot = np.linalg.pinv(jac) @ err
 
     # integrate to get next pos
-    q_new = q + dt * q_dot
+    q_new = q - dt * q_dot
     return q_new
 
 # question: can the mode be changed in a skill?
