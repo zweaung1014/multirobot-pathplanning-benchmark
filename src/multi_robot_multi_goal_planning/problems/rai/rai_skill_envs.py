@@ -26,6 +26,12 @@ from ..planning_env import (
     DependencyType,
     SafePoseType,
 )
+
+from ..skills import (
+    EEPoseGoalReaching,
+    Screw
+)
+
 from ..goals import (
     SingleGoal,
     GoalSet,
@@ -43,10 +49,8 @@ from ..registry import register
 @register("rai.single_agent_screw")
 class rai_single_agent_screw(SequenceMixin, rai_env):
     def __init__(self):
-        self.C = rai_config.make_ur5_screwing_env()
+        self.C, self.robots = rai_config.make_ur10_screwing_env()
         # self.C.view(True)
-
-        self.robots = ["a1"]
 
         rai_env.__init__(self)
 
@@ -68,7 +72,7 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
                 "screw",
                 ["a1"],
                 SingleGoal(np.array([0.5, 0.5, 0])),
-                frames=["table", "obj1"]
+                frames=["table", "obj1"],
                 skill = Screw()
             ),
             Task(
@@ -102,6 +106,8 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
 
         home_pose = self.C.getJointState()
 
+        path = LineSegment()
+
         self.tasks = [
             Task(
                 "pre_draw",
@@ -112,7 +118,7 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
                 "draw",
                 ["a1"],
                 SingleGoal(np.array([0.5, 0.5, 0])),
-                skill = EndEffectorPositionFollowing()
+                skill = EndEffectorPositionFollowing(path)
             ),
             Task(
                 "terminal",
@@ -145,6 +151,8 @@ class rai_single_agent_lego(SequenceMixin, rai_env):
 
         home_pose = self.C.getJointState()
 
+        lego_placement_path = CubicSpline()
+
         self.tasks = [
             Task(
                 "pick",
@@ -161,7 +169,7 @@ class rai_single_agent_lego(SequenceMixin, rai_env):
                 "place",
                 ["a1"],
                 SingleGoal(np.array([0.5, 0.5, 0])),
-                skill = EndEffectorPositionFollowing(),
+                skill = EndEffectorPositionFollowing(lego_placement_path),
                 frames=["table", "obj1"]
             ),
             Task(
@@ -195,6 +203,8 @@ class rai_single_agent_pick_and_place(SequenceMixin, rai_env):
 
         home_pose = self.C.getJointState()
 
+        placement_pose = None
+
         self.tasks = [
             Task(
                 "pre_pick",
@@ -216,7 +226,7 @@ class rai_single_agent_pick_and_place(SequenceMixin, rai_env):
                 "place",
                 ["a1"],
                 SingleGoal(np.array([0.5, 0.5, 0])),
-                skill = EndEffectorPositionFollowing(),
+                skill = EEPoseGoalReaching(placement_pose),
                 frames=["table", "obj1"]
             ),
             Task(
@@ -328,6 +338,9 @@ class rai_multi_agent_weld(SequenceMixin, rai_env):
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
 
+# kids game:
+# vision based insertion?
+# vision based grasping?
 @register("rai.multi_agent_insert")
 class rai_multi_agent_insert(SequenceMixin, rai_env):
   pass
@@ -337,11 +350,17 @@ class rai_multi_agent_insert(SequenceMixin, rai_env):
 # - bimanual skill with reorientation of obj? holding?
 @register("rai.bimanual_assembly")
 class rai_bimanual_assembly(SequenceMixin, rai_env):
+  # one holding, the other adding something
+  # skills might be 
+  # - dual insertion where both do something
+  # - single robot pick up
+  # - idally both at some pt.
   pass
 
 # skills: 
 # - screwing
 # - placing
+# - scaffolding stuff
 @register("rai.husky_assembly")
 class rai_husky_assembly(SequenceMixin, rai_env):
   pass
@@ -349,7 +368,7 @@ class rai_husky_assembly(SequenceMixin, rai_env):
 # skills: 
 # - grasping -> deterministic
 # - insertion -> stochastic
-# - bimanual insertion?
+# - do with four arms -> assemble fast
 @register("rai.yijiang_corl")
 class rai_yijiang_corl(SequenceMixin, rai_env):
   pass

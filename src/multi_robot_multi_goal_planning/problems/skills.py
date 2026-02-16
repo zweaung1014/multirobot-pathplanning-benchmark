@@ -184,9 +184,9 @@ class Handover(DeterministicBaseSkill):
   pass
 
 class Screw(DeterministicBaseSkill):
-  def __init__(speed, idx):
+  def __init__(speed, ee_name):
     self.speed = speed
-    self.idx = idx
+    self.idx = ee_name
 
   def step(self, q, env, dt=0.1):
     qn = q
