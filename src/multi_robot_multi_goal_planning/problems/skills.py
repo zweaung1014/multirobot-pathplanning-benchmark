@@ -17,6 +17,11 @@ class DeterministicBaseSkill(ABC):
   def step(self, q, env):
     pass
 
+  # TODO: move to step itself? two return values?
+  @abstractmethod
+  def done(self, q, env):
+    pass
+
 # abstract class for stochastic skills.
 class StochasticBaseSkill(ABC):
   def __init__(self):
@@ -26,14 +31,23 @@ class StochasticBaseSkill(ABC):
   def step(self, q, env):
     pass
 
+  @abstractmethod
+  def done(self, q, env):
+    pass
+
 # abstract class for deterministic timed skills.
 class BaseDeterministicTimedSkill(ABC):
   def __init__(self):
     pass
 
+  # TODO: should likely simply merge q and t to 'state'
   @abstractmethod
   def step(self, q, t, env):
     raise NotImplementedError
+
+  @abstractmethod
+  def done(self, q, t, env):
+    pass
 
 # abstract class for stochastic timed skills.
 class BaseStochasticTimedSkill(ABC):
@@ -43,6 +57,10 @@ class BaseStochasticTimedSkill(ABC):
   @abstractmethod
   def step(self, q, t, env):
     raise NotImplementedError
+
+  @abstractmethod
+  def done(self, q, t, env):
+    pass
 
 class EEPositionGoalReaching(DeterministicBaseSkill):
   def __init__(self, goal, ee_name):
@@ -63,6 +81,15 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
     # integrate to get next pos
     q_new = q - dt * q_dot
     return q_new
+
+  def done(self, q, env):
+    env.C.setJointState(q)
+    [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, self.goal_position)
+    
+    if np.linalg.norm(err) < 1e-3:
+      return True
+
+    return False
 
 # simple pid controller
 class EEPoseGoalReaching(DeterministicBaseSkill):
@@ -85,6 +112,16 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
     q_new = q - dt * q_dot
     return q_new
 
+  def done(self, q, env):
+    # get jacobian
+    env.C.setJointState(q)
+    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
+
+    if np.linalg.norm(err) < 1e-3:
+      return True
+
+    return False
+
 # question: can the mode be changed in a skill?
 # or does it need to be two skills?
 class VacuumGrasping(BaseDeterministicTimedSkill):
@@ -94,10 +131,15 @@ class VacuumGrasping(BaseDeterministicTimedSkill):
   def step(self, t, q, env):
     raise NotImplementedError
 
+  def done(self, t, q, env):
+    raise NotImplementedError
+
 class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
   def __init__(self, line_start_pos, line_goal_pos, ee_name):
     self.line_start_pos = line_start_pos
     self.line_goal_pos = line_goal_pos
+
+    self.duration = 1
 
     self.ee_name = ee_name
 
@@ -118,10 +160,23 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
     q_new = q - dt * q_dot
     return q_new
 
+  def done(self, t, q, env):
+    desired_next_pos = self._get_desired_pose_at_time(self.duration)
+
+    env.C.setJointState(q)
+    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, desired_next_pos)
+    
+    if np.linalg.norm(err) < 1e-3:
+      return True
+
+    return False
+
 class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
   def __init__(self, line_start_pos, line_goal_pos, ee_name):
     self.line_start_pos = line_start_pos
     self.line_goal_pos = line_goal_pos
+
+    self.duration = 1
 
     self.ee_name = ee_name
 
@@ -141,6 +196,17 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
     # integrate to get next pos
     q_new = q - dt * q_dot
     return q_new
+
+  def done(self, t, q, env):
+    desired_next_pos = self._get_desired_pose_at_time(self.duration)
+
+    env.C.setJointState(q)
+    [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
+
+    if np.linalg.norm(err) < 1e-3:
+      return True
+
+    return False
 
 # cool because it includes multiple robots.
 class DualRobotGrasping(BaseDeterministicTimedSkill):
@@ -163,6 +229,9 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
     # do ik to compute the positions of the end effectors
     raise NotImplementedError
 
+  def done(self, t, q, env):
+    raise NotImplementedError
+
 class Insertion(StochasticBaseSkill):
   def __init__():
     pass
@@ -173,25 +242,56 @@ class Insertion(StochasticBaseSkill):
     # decide noise level ourselves?
     pass
 
-class Grasping(StochasticBaseSkill):
+  def done(self, q, env):
+    raise NotImplementedError
+
+class DexterousGrasping(StochasticBaseSkill):
   def __init__():
     pass
 
   def step(self, q, env, dt=0.1):
     pass
 
+  def done(self, q, env):
+    raise NotImplementedError
+
 class Handover(DeterministicBaseSkill):
-  pass
+  def __init__():
+    pass
+
+  def step(self, q, env, dt=0.1):
+    pass
+
+  def done(self, q, env):
+    raise NotImplementedError
+
+class JogJoint(BaseDeterministicTimedSkill):
+  def __init__(speed, idx, duration):
+    self.speed = speed
+    self.idx = idx
+    self.duration = duration
+
+  def step(self, t, q, env, dt=0.1):
+    qn = q
+    qn[idx] += speed
+    return qn
+
+  def done(self, t, q, env, dt=0.1):
+    if t > self.duration:
+      return True
+
+    return False
 
 class Screw(DeterministicBaseSkill):
   def __init__(speed, ee_name):
     self.speed = speed
-    self.idx = ee_name
+    self.ee_name = ee_name
 
   def step(self, q, env, dt=0.1):
-    qn = q
-    qn[idx] += speed
-    return qn
+    pass
+
+  def done(self, q, env):
+    raise NotImplementedError
 
 class PrecomputedSkillDistribution(StochasticBaseSkill):
   def __init__():
@@ -199,3 +299,18 @@ class PrecomputedSkillDistribution(StochasticBaseSkill):
 
   def step(self, q, env, dt=0.1):
     pass
+
+  def done(self, q, env):
+    raise NotImplementedError
+
+# this can model bin picking form a bin where we do not care which item we take
+# could e.g. be a bin of all the same objects, and we do not care
+class StochasticBinPick(StochasticBaseSkill):
+  def __init__():
+    pass
+
+  def step(self, q, env, dt=0.1):
+    pass
+
+  def done(self, q, env):
+    raise NotImplementedError
