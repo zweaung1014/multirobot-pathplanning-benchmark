@@ -8369,6 +8369,165 @@ def make_bimanual_sorting(view: bool = False):
     return C, [pre_pick_pose_a1, pre_place_pose_a1], [pre_pick_pose_a2, pre_place_pose_a2]
 
 
+def make_single_agent_bin_picking_env(view: bool = False):
+    C = ry.Config()
+
+    C.addFrame("floor").setPosition([0, 0, 0.0]).setShape(
+        ry.ST.box, size=[20, 20, 0.02, 0.005]
+    ).setColor([0.9, 0.9, 0.9]).setContact(0)
+
+    table = (
+        C.addFrame("table")
+        .setPosition([0, 0, 0.2])
+        .setShape(ry.ST.box, size=[2, 3, 0.06, 0.005])
+        .setColor([0.6, 0.6, 0.6])
+        .setContact(1)
+    )
+
+    robot_path = os.path.join(os.path.dirname(__file__), "../../assets/models/rai/ur10/ur10_two_finger.g")
+
+    C.addFile(robot_path, namePrefix="a1_").setParent(
+        C.getFrame("table")
+    ).setRelativePosition([-0.5, 0.5, 0]).setRelativeQuaternion(
+        [0.7071, 0, 0, -0.7071]
+    ).setJoint(ry.JT.rigid)
+
+    # add obj
+
+    C.addFrame("obj1").setParent(table).setShape(
+        ry.ST.box, [0.05, 0.05, 0.025, 0.5]
+    ).setRelativePosition([-0.5, -0.05, 0.1]).setMass(
+        0.1
+    ).setColor([1, 0, 0]).setContact(1).setJoint(ry.JT.rigid)
+
+    C.addFrame("obj2").setParent(table).setShape(
+        ry.ST.box, [0.05, 0.05, 0.025, 0.5]
+    ).setRelativePosition([-0.5, 0.05, 0.1]).setMass(
+        0.1
+    ).setColor([0, 1, 0]).setContact(1).setJoint(ry.JT.rigid)
+
+    C.addFrame("goal1").setParent(table).setShape(
+        ry.ST.marker, [0.1, 0.005]
+    ).setRelativePosition([0.5, 0., 0.1]).setContact(
+        0
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("goal2").setParent(table).setShape(
+        ry.ST.marker, [0.1, 0.005]
+    ).setRelativePosition([0.5, 0.1, 0.1]).setContact(
+        0
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_floor").setParent(table).setShape(
+        ry.ST.box, size=[0.4, 0.4, 0.03, 0.005]
+    ).setContact(1).setRelativePosition(
+        [-0.5, -0.0, 0.05]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_l").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.03, 0.4, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [-0.2, 0., 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_r").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.03, 0.4, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [0.2, 0., 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_t").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.37, 0.03, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [0.0, 0.2, 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_b").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.37, 0.03, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [0.0, -0.2, 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    # C.view(True)
+
+    def compute_poses(C, robot_prefix, box, goal):
+        # set everything but the current box to non-contact
+        c_tmp = ry.Config()
+        c_tmp.addConfigurationCopy(C)
+
+        robot_base = robot_prefix + "base"
+        c_tmp.selectJointsBySubtree(c_tmp.getFrame(robot_base))
+
+        q_home = c_tmp.getJointState()
+
+        komo = ry.KOMO(
+            c_tmp, phases=2, slicesPerPhase=1, kOrder=1, enableCollisions=True
+        )
+        komo.addObjective(
+            [], ry.FS.accumulatedCollisions, [], ry.OT.ineq, [1e1], [-0.0]
+        )
+        komo.addObjective([], ry.FS.jointLimits, [], ry.OT.ineq, [1e1], [-0.0])
+
+        komo.addControlObjective([], 0, 1e-1)
+        # komo.addControlObjective([], 1, 1e-1)
+        # komo.addControlObjective([], 2, 1e-1)
+
+        pre_grasp_offset = 0.1
+
+        komo.addModeSwitch([1, 2], ry.SY.stable, [robot_prefix + "gripper_center", box])
+        komo.addObjective(
+            [1, 2],
+            ry.FS.positionDiff,
+            [robot_prefix + "gripper_center", box],
+            ry.OT.sos,
+            [1e1, 1e1, 1],
+            target=[0, 0, pre_grasp_offset]
+        )
+        komo.addObjective(
+            [1, 2],
+            ry.FS.scalarProductZZ,
+            [robot_prefix + "gripper_center", box],
+            ry.OT.sos,
+            [5e1],
+            [-1],
+        )
+        komo.addObjective(
+            [1, 2],
+            ry.FS.scalarProductXX,
+            [robot_prefix + "gripper_center", box],
+            ry.OT.sos,
+            [1e1],
+            [1],
+        )
+
+        komo.addObjective([2, -1], ry.FS.poseDiff, [goal, box], ry.OT.eq, [1e1])
+
+        # komo.addObjective(
+        #     times=[0, -1],
+        #     feature=ry.FS.jointState,
+        #     frames=[],
+        #     type=ry.OT.sos,
+        #     scale=[5e-1],
+        #     target=q_home,
+        # )
+
+        komo.addObjective(
+            times=[3, -1],
+            feature=ry.FS.jointState,
+            frames=[],
+            type=ry.OT.eq,
+            scale=[1e0],
+            target=q_home,
+        )
+
+        keyframes = solve_komo_problem(komo, 10, c_tmp, False, 3, 1.5)
+        return keyframes
+    
+    pre_pick_pose_obj1, pre_place_pose_obj1 = compute_poses(C, "a1_ur_", "obj1", "goal1")
+    pre_pick_pose_obj2, pre_place_pose_obj2 = compute_poses(C, "a1_ur_", "obj2", "goal2")
+
+    return C, [pre_pick_pose_obj1, pre_place_pose_obj1, pre_pick_pose_obj2, pre_place_pose_obj2]
+
 def make_multi_agent_pick_and_place(view: bool = False):
     pass
 

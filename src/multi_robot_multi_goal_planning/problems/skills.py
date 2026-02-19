@@ -306,7 +306,7 @@ class PrecomputedSkillDistribution(StochasticBaseSkill):
 # this can model bin picking form a bin where we do not care which item we take
 # could e.g. be a bin of all the same objects, and we do not care
 class StochasticBinPick(StochasticBaseSkill):
-  def __init__():
+  def __init__(self):
     pass
 
   def step(self, q, env, dt=0.1):

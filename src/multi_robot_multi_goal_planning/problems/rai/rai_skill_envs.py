@@ -30,7 +30,8 @@ from ..planning_env import (
 from ..skills import (
     EEPoseGoalReaching,
     JogJoint,
-    EndEffectorPositionFollowing
+    EndEffectorPositionFollowing,
+    StochasticBinPick
 )
 
 from ..goals import (
@@ -453,25 +454,89 @@ class rai_multi_agent_insert(SequenceMixin, rai_env):
 # Stochastic skill
 @register("rai.single_agent_bin_picking")
 class rai_single_agent_bin_picking(SequenceMixin, rai_env):
-    def __init__(self, num_objects):
-        self.C = rai_config.make_single_agent_bin_picking_env()
+    def __init__(self):
+        self.C, [pre_pick_o1, pre_place_o1, pre_pick_o2, pre_place_o2] = rai_config.make_single_agent_bin_picking_env()
         # self.C.view(True)
 
         self.robots = ["a1"]
 
         rai_env.__init__(self)
 
+        self.manipulating_env = True
+
         home_pose = self.C.getJointState()
+
+        pick_position = self.C.getFrame("obj1").getPose()
+        place_position = self.C.getFrame("goal1").getPose()
 
         # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
         # above the bin for picking
 
         # the planning itself is not that interesting here, since we only do a single robot, but this is a stochastic
         # skill, therefore needing to deal with this.
-
-        self.tasks = []
+        
+        self.tasks = [
+            Task(
+                "pre_pick_1",
+                ["a1"],
+                SingleGoal(pre_pick_o1),
+            ),
+            Task(
+                "pick_1",
+                ["a1"],
+                SingleGoal(pre_pick_o1),
+                frames=["a1_ur_gripper_center", "obj1"],
+                type="pick",
+                skill = StochasticBinPick()
+            ),
+            Task(
+                "pre_place_1",
+                ["a1"],
+                SingleGoal(pre_place_o1),
+            ),
+            Task(
+                "place_1",
+                ["a1"],
+                SingleGoal(pre_place_o1),
+                skill = StochasticBinPick(),
+                type="place",
+                frames=["table", "obj1"]
+            ),
+            Task(
+                "pre_pick_2",
+                ["a1"],
+                SingleGoal(pre_pick_o2),
+            ),
+            Task(
+                "pick_2",
+                ["a1"],
+                SingleGoal(pre_pick_o2),
+                frames=["a1_ur_gripper_center", "obj2"],
+                type="pick",
+                skill = StochasticBinPick()
+            ),
+            Task(
+                "pre_place_2",
+                ["a1"],
+                SingleGoal(pre_place_o2),
+            ),
+            Task(
+                "place_2",
+                ["a1"],
+                SingleGoal(pre_place_o2),
+                skill = StochasticBinPick(),
+                type="place",
+                frames=["table", "obj2"]
+            ),
+            Task(
+                "terminal",
+                ["a1"],
+                SingleGoal(home_pose),
+            ),
+        ]
 
         self.sequence = self._make_sequence_from_names(
+            ["pre_pick_1", "pick_1", "pre_place_1", "place_1", "pre_pick_2", "pick_2", "pre_place_2", "place_2", "terminal"]
         )
 
         self.collision_tolerance = 0.001
