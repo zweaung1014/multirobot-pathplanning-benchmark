@@ -381,7 +381,7 @@ class rai_multi_agent_stacking(SequenceMixin, rai_env):
 # draw the crl logo with 3 robots:
 # TODO this should be an unordered problem
 @register("rai.multi_agent_drawing")
-class rai_multi_agent_insert(SequenceMixin, rai_env):
+class rai_multi_agent_drawing(SequenceMixin, rai_env):
     def __init__(self):
         self.C = rai_config.make_multi_agent_drawing()
         # self.C.view(True)
