@@ -888,8 +888,8 @@ class MjxEnv(MujocoEnvironment):
         self.jit_step = jax.jit(mjx.step)
         
         # Pre-compile single collision check
-        # self._jit_single_check = jax.jit(self._check_single_pure)
-        self._jit_single_check = self._make_single_check()
+        # self._is_coll_free_single = jax.jit(self._check_single_pure)
+        self._is_coll_free_single = self._make_single_check()
 
         # Pre-compile batch operations with fixed signatures
         self._jit_batch_check = jax.jit(
@@ -898,11 +898,11 @@ class MjxEnv(MujocoEnvironment):
 
         # self._batch_is_collision_free_optimized_jit = jax.jit(self._batch_is_collision_free_optimized)
         # self._batch_is_collision_free_optimized_jit = self._batch_is_collision_free_optimized
-        self._jit_chunk_check = self._make_edge_check(chunk_size=64)
+        self._is_coll_free_batch = self._make_edge_check(chunk_size=64)
         
         # Warm up JIT compilation
         dummy_q = jax.numpy.zeros(len(self._all_robot_idx))
-        self._jit_single_check(dummy_q)
+        self._is_coll_free_single(dummy_q)
         
         # Pre-allocate reusable data structure to reduce allocations
         self._temp_data = self.mjx_data
@@ -925,56 +925,57 @@ class MjxEnv(MujocoEnvironment):
                 return jax.numpy.any(temp_data.contact.dist < -collision_tol)
 
             has_collision = jax.vmap(check_one)(qs)
+            # return jax.numpy.any(has_collision)
             return jax.numpy.logical_not(jax.numpy.any(has_collision))
 
         return _check_chunk
 
-    # def _batch_is_collision_free_optimized_jit(self, qs, chunk_size: int = 128):
-    #     a = time.time()
-    #     if not qs:
-    #         return True
-
-    #     n = len(qs)
-    #     dof = qs[0].shape[0]
-        
-    #     for start in range(0, n, chunk_size):
-    #         chunk_qs = qs[start:start + chunk_size]
-    #         actual = len(chunk_qs)
-            
-    #         # Pad with last element if needed
-    #         if actual < chunk_size:
-    #             chunk_qs = chunk_qs + [chunk_qs[-1]] * (chunk_size - actual)
-            
-    #         # Stack only chunk_size elements at a time
-    #         chunk = jax.numpy.stack(chunk_qs)
-            
-    #         if not self._jit_chunk_check(chunk):
-    #             print(time.time() - a)
-    #             return False
-
-    #     print(time.time() - a)
-
-    #     return True
-
-    def _batch_is_collision_free_optimized_jit(self, qs_array, chunk_size: int = 64):
+    def _batch_is_collision_free_optimized_jit(self, qs, chunk_size: int = 8):
         a = time.time()
-        n = qs_array.shape[0]
-        last = qs_array[-1]
+        if not qs:
+            return True
 
+        n = len(qs)
+        dof = qs[0].shape[0]
+        
         for start in range(0, n, chunk_size):
-            chunk = qs_array[start:start + chunk_size]
-            pad_len = chunk_size - chunk.shape[0]
-            if pad_len > 0:
-                chunk = jax.numpy.concatenate(
-                    [chunk, jax.numpy.tile(last, (pad_len, 1))], axis=0
-                )
-            if not self._jit_chunk_check(chunk):
+            chunk_qs = qs[start:start + chunk_size]
+            actual = len(chunk_qs)
+            
+            # Pad with last element if needed
+            if actual < chunk_size:
+                chunk_qs = chunk_qs + [chunk_qs[-1]] * (chunk_size - actual)
+            
+            # Stack only chunk_size elements at a time
+            chunk = jax.numpy.stack(chunk_qs)
+            
+            if not self._is_coll_free_batch(chunk):
                 print(time.time() - a)
                 return False
 
         print(time.time() - a)
 
         return True
+
+    # def _batch_is_collision_free_optimized_jit(self, qs_array, chunk_size: int = 64):
+    #     a = time.time()
+    #     n = qs_array.shape[0]
+    #     last = qs_array[-1]
+
+    #     for start in range(0, n, chunk_size):
+    #         chunk = qs_array[start:start + chunk_size]
+    #         pad_len = chunk_size - chunk.shape[0]
+    #         if pad_len > 0:
+    #             chunk = jax.numpy.concatenate(
+    #                 [chunk, jax.numpy.tile(last, (pad_len, 1))], axis=0
+    #             )
+    #         if not self._is_coll_free_batch(chunk):
+    #             print(time.time() - a)
+    #             return False
+
+    #     print(time.time() - a)
+
+    #     return True
 
     def _make_single_check(self):
         # mjx_data = self.mjx_data
@@ -1022,7 +1023,7 @@ class MjxEnv(MujocoEnvironment):
         
         if qposes.shape[0] == 1:
             # Single check - avoid batch overhead
-            result = self._jit_single_check(qposes[0])
+            result = self._is_coll_free_single(qposes[0])
             return result
         else:
             # Batch check
@@ -1058,23 +1059,17 @@ class MjxEnv(MujocoEnvironment):
 
     def _sequential_collision_check(self, qs):
         """Optimized sequential check - avoid unnecessary data mutations."""
-        base_qpos = self.mjx_data.qpos
+        assert not self.manipulating_env
+        a = time.time()
         
         for q in qs:
-            assert not self.manipulating_env
-            
-            # Update qpos in-place style operation
-            updated_qpos = base_qpos.at[self._all_robot_idx].set(q)
-            temp_data = self._temp_data.replace(qpos=updated_qpos)
-            
-            # Forward pass
-            temp_data = self.jit_fwd(self.mjx_model, temp_data)
-            
-            # Early exit on collision
-            if temp_data.ncon > 0:
-                if jax.numpy.any(temp_data.contact.dist < -self.collision_tolerance):
-                    return False
+            res = self._is_coll_free_single(q)
+            if not res:
+                print(time.time() - a)
+                return False
                     
+        print(time.time() - a)
+
         return True
 
     def is_collision_free(self, q: Optional[Configuration], mode: Optional[Mode]):
@@ -1089,7 +1084,7 @@ class MjxEnv(MujocoEnvironment):
         
         # a = time.time()
         # Use the pre-compiled single check function
-        res = self._jit_single_check(q_state)
+        res = self._is_coll_free_single(q_state)
         # print(time.time() - a)
 
         return res
@@ -1144,37 +1139,39 @@ class MjxEnv(MujocoEnvironment):
         # Generate indices using your existing binary search method
         idx = generate_binary_search_indices(N)
 
-        # q1_state = q1.state()
-        # q2_state = q2.state()
-        # dir = (q2_state - q1_state) / (N - 1)
-
-        # # Prepare configurations to check
-        # qs = []
-        # for i in idx[N_start:N_max]:
-        #     if not include_endpoints and (i == 0 or i == N - 1):
-        #         continue
-        #     q = q1_state + dir * i
-        #     qs.append(q)
-    
-        q1_state = jax.numpy.array(q1.state())
-        q2_state = jax.numpy.array(q2.state())
+        q1_state = q1.state()
+        q2_state = q2.state()
         dir = (q2_state - q1_state) / (N - 1)
 
-        valid_idx = [i for i in idx[N_start:N_max]
-                     if include_endpoints or (i != 0 and i != N - 1)]
+        # Prepare configurations to check
+        qs = []
+        for i in idx[N_start:N_max]:
+            if not include_endpoints and (i == 0 or i == N - 1):
+                continue
+            q = q1_state + dir * i
+            qs.append(q)
+    
+        # q1_state = jax.numpy.array(q1.state())
+        # q2_state = jax.numpy.array(q2.state())
+        # dir = (q2_state - q1_state) / (N - 1)
 
-        if not valid_idx:
-            return True
+        # valid_idx = [i for i in idx[N_start:N_max]
+        #              if include_endpoints or (i != 0 and i != N - 1)]
 
-        valid_idx_array = jax.numpy.array(valid_idx)
-        qs = q1_state + dir * valid_idx_array[:, None]
-
-        # if not qs:
+        # if not valid_idx:
         #     return True
+
+        # valid_idx_array = jax.numpy.array(valid_idx)
+        # qs = q1_state + dir * valid_idx_array[:, None]
+
+        if not qs:
+            return True
 
         # Decide whether to use parallel or sequential based on problem size
         # use_parallel = force_parallel or (len(qs) >= 20 and len(self._data_pool) > 1)
         use_parallel = True
+
+        # print(self._batch_is_collision_free_optimized_jit(qs),self._sequential_collision_check(qs))
 
         if use_parallel:
             # return self._batch_is_collision_free_optimized(qs)
@@ -1503,7 +1500,7 @@ class four_arm_ur10_mujoco_env(SequenceMixin, MjxEnv):
         }
 
         # call once so its compiled
-        self._jit_single_check(self.start_pos.state())
+        self._is_coll_free_single(self.start_pos.state())
         
 
 @register("mujoco.single_ur10")
