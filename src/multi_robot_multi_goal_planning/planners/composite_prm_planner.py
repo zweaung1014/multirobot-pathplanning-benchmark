@@ -32,32 +32,64 @@ from .termination_conditions import (
 )
 from .prm.prm_graph import MultimodalGraph
 
-
 @dataclass
 class CompositePRMConfig:
+    # Mode exploration
     mode_sampling_type: str = "uniform_reached"
-    distance_metric: str = "max_euclidean"
-    use_k_nearest: bool = False
-    try_informed_sampling: bool = True
+    init_mode_sampling_type: str = "greedy"
+    frontier_mode_sampling_probability: float = 0.98
+
+    # Sampling budget
     uniform_batch_size: int = 200
     uniform_transition_batch_size: int = 500
     informed_batch_size: int = 500
     informed_transition_batch_size: int = 500
+    init_uniform_batch_size: int = 150
+    init_transition_batch_size: int = 90
+
+    # Informed sampling
+    try_informed_sampling: bool = True
     locally_informed_sampling: bool = True
     try_informed_transitions: bool = True
+    try_direct_informed_sampling: bool = True
+    inlcude_lb_in_informed_sampling: bool = False
+    
+    # Optimization
     try_shortcutting: bool = True
     shortcutting_mode: str = "round_robin"
     shortcutting_iters: int = 250
     shortcutting_interpolation_resolution: float = 0.1
-    try_direct_informed_sampling: bool = True
-    inlcude_lb_in_informed_sampling: bool = False
-    init_mode_sampling_type: str = "greedy"
-    frontier_mode_sampling_probability: float = 0.98
-    init_uniform_batch_size: int = 150
-    init_transition_batch_size: int = 90
+
+    distance_metric: str = "max_euclidean"
+    use_k_nearest: bool = False
     with_mode_validation: bool = False
     with_noise: bool = False
 
+"""
+NOTES (Liam):
+Remove later also within code, keep for now for better understanding 
+=============================================================================================
+Composite PRM Planner
+
+Core idea:
+- Composite C-space: all robots are planned together in one joint configuration space
+- Build PRM graph across multiple modes
+- Alternates uniform sampling (exploration) + informed sampling (exploitation)
+
+Key points:
+1. Sample configurations in reached modes + transitions between modes
+2. Search graph for path
+3. If found, add informed samples near path, prune far nodes, shortcut
+4. Repeat
+
+Differences to prioritized planner:
+- Shorter, because:
+    1. Reusable components: uses MultimodelGraph, InformedSampling, ModeValidation and shortcutting
+    2. No time dimension: plans in configuration space only, doesn't track time
+    3. No per-robot decomposition: treats all robots as a single composite configuration
+- ...
+=============================================================================================
+"""
 
 class CompositePRM(BasePlanner):
     def __init__(self, env: BaseProblem, config: CompositePRMConfig | None = None):
@@ -82,11 +114,19 @@ class CompositePRM(BasePlanner):
         found_solution: bool = False,
     ) -> Mode:
         """
-        Sample a mode from the previously reached modes.
+        Selecty which mode to sample a configuration in. There are 4 different strategies for the mode sampling:
+        - uniformed_reached: Uniformly choose a mode from the list, can pick already expanded modes and find alternative transitions 
+        - frontier: Pick randomly a mode that wasn't explored yet, balance exploration
+        - greedy: Pick the newest mode from frontier list (mode that wasn't explored yet)
+        - weighted: Pick randomly (weighted choice) from the list, giving more probability to less sampled modes
         """
-
+        # Strategy A: Equal probability for each mode
+        # Can waste effort on already well-explored modes  
         if mode_sampling_type == "uniform_reached":
             return random.choice(reached_modes)
+        
+        # Strategy B: Modes with fewer samples get higher probability among remaining modes
+        # Biased toward sampling frontier modes (modes that haven't been explored) to balance exploration
         elif mode_sampling_type == "frontier":
             if len(reached_modes) == 1:
                 return reached_modes[0]
@@ -100,15 +140,17 @@ class CompositePRM(BasePlanner):
             sample_counts = {}
             inv_prob = []
 
+            # Check for frontier modes in the list of so far discovered modes
             for m in reached_modes:
                 sample_count = graph.get_num_samples_in_mode(m)
                 sample_counts[m] = sample_count
-                if not m.next_modes:
-                    frontier_modes.append(m)
+                if not m.next_modes: 
+                    frontier_modes.append(m) # No transition to any successor ever found -> frontier mode
                 else:
-                    remaining_modes.append(m)
-                    inv_prob.append(1 - (sample_count / total_nodes))
+                    remaining_modes.append(m) # Modes already having known successors
+                    inv_prob.append(1 - (sample_count / total_nodes)) # Higher inverse fraction for modes with fewer samples
 
+            # Special case: only frontier mode should be sampled
             if self.config.frontier_mode_sampling_probability == 1:
                 if not frontier_modes:
                     frontier_modes = reached_modes
@@ -117,10 +159,12 @@ class CompositePRM(BasePlanner):
                     return random.choices(frontier_modes, weights=p, k=1)[0]
                 else:
                     return random.choice(reached_modes)
-
+            
+            # Fallback to uniform if either partition is empty
             if not remaining_modes or not frontier_modes:
                 return random.choice(reached_modes)
 
+            # Build probability distribution
             total_inverse = sum(
                 1 - (sample_counts[m] / total_nodes) for m in remaining_modes
             )
@@ -133,8 +177,14 @@ class CompositePRM(BasePlanner):
             p.extend((inv_prob / total_inverse) * p_remaining)
 
             return random.choices(sorted_reached_modes, weights=p, k=1)[0]
+        
+        # Strategy C: Always pick most recently reached mode
+        # Most direct progression possible towards the terminal mode
         elif mode_sampling_type == "greedy":
-            return reached_modes[-1]
+            return reached_modes[-1] # Newest frontier
+        
+        # Strategy D: Inversely proportional to node count (balances samples across modes)
+        # Doesn't care about frontier, purely cares about equal sample count
         elif mode_sampling_type == "weighted":
             # sample such that we tend to get similar number of pts in each mode
             w = []
@@ -144,31 +194,46 @@ class CompositePRM(BasePlanner):
                     num_nodes += len(graph.nodes[m])
                 if m in graph.transition_nodes:
                     num_nodes += len(graph.transition_nodes[m])
-                w.append(1 / max(1, num_nodes))
+                w.append(1 / max(1, num_nodes)) # Weight each mode by inverse
             return random.choices(tuple(reached_modes), weights=w)[0]
 
         return random.choice(reached_modes)
 
     def _sample_valid_uniform_batch(
-        self, graph: MultimodalGraph, batch_size: int, cost: float | None
+        self, 
+        graph: MultimodalGraph, 
+        batch_size: int, 
+        cost: float | None
     ) -> Tuple[List[State], int]:
+        """
+        Generate batch of collision-free free-space configurations (general roadmap nodes),
+        not transition nodes. They fill in the interior of modes, so graph search can find paths 
+        within a mode between transition points. 
+
+        Rejection sampling:
+        - Only keep samples within ellipse with foci at start and goal (in composite C-space it's
+          a hyperellipsoid?)
+        - Only keep samples that are collision-free
+        """
         new_samples = []
         num_attempts = 0
         num_valid = 0
 
+        # If graph already discovered goal nodes, build foci of ellipsoid in config space
+        # Foci: start node and (first) goal node 
         if graph.goal_nodes:
             focal_points = np.array(
                 [graph.root.state.q.state(), graph.goal_nodes[0].state.q.state()],
                 dtype=np.float64,
             )
 
+        # SAMPLING: repeat until batch_size valid samples are found
         while len(new_samples) < batch_size:
             num_attempts += 1
             if num_attempts > 100 * batch_size:
                 break
 
-            # print(len(new_samples))
-            # sample mode
+            # Step 1: sample mode
             m = self._sample_mode(
                 self.sorted_reached_modes,
                 graph,
@@ -176,51 +241,64 @@ class CompositePRM(BasePlanner):
                 cost is not None,
             )
 
-            # print(m)
-
-            # sample configuration
+            # Step 2: sample configuration (uniformly within joint limits)
+            # TODO: QUESTION Doesn't use mode information (unlike sample_valid_uniform_transitions). Why doesn't use mode?
+            # TODO: because purpose simply is to densify roadmap within free C-space? need mode only for collision check
             q = self.env.sample_config_uniform_in_limits()
 
+            # Step 3: rejection (ellipsoid) and collision check 
             if (
                 cost is not None
-                and sum(self.env.batch_config_cost(q, focal_points)) > cost
+                and sum(self.env.batch_config_cost(q, focal_points)) > cost # cost = length of current best path
             ):
                 continue
-
+            
             if self.env.is_collision_free(q, m):
                 new_samples.append(State(q, m))
                 num_valid += 1
-
-            # self.env.show(False)
 
         print("Percentage of succ. attempts", num_valid / num_attempts)
 
         return new_samples, num_attempts
 
     def _sample_uniform_transition_configuration(self, mode, reached_terminal_mode):
-        # sample transition at the end of this mode
+        """
+        Sample a single composite configuration that satisfies a mode transition constraint.
+        Robots responsible for the active task are placed at a goal configuration, while
+        other robots are placed randomly. 
+
+        These nodes enable switching between modes. 
+        
+        Example: Mode A: task_ids=[0,1,2] -> Mode B: task_ids=[3,1,2]
+                 Robot 0 completed task 0
+            For this transition to be geometrically valid, robot 0 must be at a configuration
+            that satisfies task 0's goal! 
+        """
+        # Step 1: Choose which transition to attempt
         if reached_terminal_mode:
-            # init next ids: caches version of next ids
+            # If path to goal already exists, looks at cached sequence leading to goal (exploits good known transitions)
             next_ids = self.init_next_ids[mode]
         else:
+            # Planner still is exploring, get from oravle any lofically valid task that could be completed next 
             next_ids = self.mode_validation.get_valid_next_ids(mode)
 
-        active_task = self.env.get_active_task(mode, next_ids)
-        constrained_robot = active_task.robots
-        goal_sample = active_task.goal.sample(mode)
+        # Step 2: Identify the active task (being completed) and its constraints
+        active_task = self.env.get_active_task(mode, next_ids) # By comparing elementwise which task ID changed -> finished task
+        constrained_robot = active_task.robots # Need to satisfy goal constraint for transition to happen
+        goal_sample = active_task.goal.sample(mode) # Draw sample from goal region
 
-        # sample a configuration
+        # Step 3: Build the composite configuration
         q = []
         end_idx = 0
         for robot in self.env.robots:
-            if robot in constrained_robot:
+            if robot in constrained_robot: # Constrained robots
                 dim = self.env.robot_dims[robot]
-                q.append(goal_sample[end_idx : end_idx + dim])
+                q.append(goal_sample[end_idx : end_idx + dim]) # Constrained to be at sampled goal config
                 end_idx += dim
-            else:
+            else: # Unconstrained robots
                 r_idx = self.env.robot_idx[robot]
                 lims = self.env.limits[:, r_idx]
-                q.append(np.random.uniform(lims[0], lims[1]))
+                q.append(np.random.uniform(lims[0], lims[1])) # Free to be anywhere (within limits)
         q = self.env.start_pos.from_list(q)
 
         return q
@@ -236,74 +314,104 @@ class CompositePRM(BasePlanner):
         cost: float | None,
         reached_modes: Set[Mode],
     ) -> Set[Mode]:
+        """
+        Sample and add transition nodes to the graph to expand mode exploration.
+        -> Update reached_modes
+
+        Transition node: configuration satisfying goal constraint for moving from one mode to another. 
+        Basically connections between different modes in the graph.
+
+        Flow:
+        - Sample modes using configured strategy (uniform, frontier, greedy, weighted)
+        - For each mode, sample configurations satisfying transition goals
+        - Validate those nodes and determine valid successor modes
+        - Add transitions to graph 
+        """
         transitions, failed_attemps = 0, 0
         reached_terminal_mode = False
-
-        # if we did not yet reach the goal mode, sample using the specified initial sampling strategy
+        
+        # PHASE 1: setup
+        # Sampling strategy selection: 
         if len(g.goal_nodes) == 0:
+            # No terminal mode has been reached (goal_nodes are nodes whose state is in the terminal mode)
+            # Use initial mode sampling strategy (exploratory)
             mode_sampling_type = self.config.init_mode_sampling_type
         else:
+            # Once goal mode has been reached
+            # Use mode sampling strategy (more focused)
             mode_sampling_type = self.config.mode_sampling_type
 
-        # if we already found goal nodes, we construct the focal points of our ellipse
+        # Focal points of ellipse for informed sampling, used later for sampling rejection 
         if len(g.goal_nodes) > 0:
-            focal_points = np.array(
+            # Goal nodes already found
+            focal_points = np.array( # Start: joint configs (all robots) @ t=0, Goal: joint configs (all robots) at first found terminal node
                 [g.root.state.q.state(), g.goal_nodes[0].state.q.state()],
                 dtype=np.float64,
             )
 
-        # if we reached the goal, but we have not found a path yet, we set reached_terminal_mode to True
-        # reason: only sample the mode sequence that lead us to the terminal mode
+        # Terminal mode flag
+        # When True: restrict sampling to only the mode sequence leading toward the terminal mode 
+        # Sort of exploitation-over-exploration switch 
         if cost is None and len(g.goal_nodes) > 0 and self.config.with_mode_validation:
-            reached_terminal_mode = True
+            # No valid path found yet & sampled a transition into a terminal mode & mode validation enabled (for pruning)
+            reached_terminal_mode = True # From now on, 
 
-        # If sorted_reached_modes is not up to date, update it
-        # I am not sure if this should be happening here -> symptom for other problems?
+        # Sorted reached modes
         if len(reached_modes) != len(self.sorted_reached_modes):
+            # Update sorted_reached_modes if not up to date?
+            # TODO: I am not sure if this should be happening here -> symptom for other problems? (Valentin)
             if not reached_terminal_mode:
                 self.sorted_reached_modes = sorted(reached_modes, key=lambda m: m.id)
 
-        # sorted reached modes is mainly for debugging and reproducability
+        # Mainly for debugging and reproducability
         mode_subset_to_sample = self.sorted_reached_modes
 
+        # PHASE 2: main sampling loop
         while (
             transitions < transistion_batch_size
             and failed_attemps < 5 * transistion_batch_size
         ):
-            # sample mode
+            # Step 1: pick a mode to sample a transition for, using chosen strategy
             mode = self._sample_mode(
                 mode_subset_to_sample, g, mode_sampling_type, cost is None
             )
 
+            # Step 2: sample a transition configuration in that mode
+            # Generates config q with active robots constrained to goal positions & other robots free
+            # Uses mode information (unlike _sample_valid_uniform_batch), because transition nodes need to satisfy specific goal/task constraints
             q = self._sample_uniform_transition_configuration(
                 mode, reached_terminal_mode
             )
 
-            # could this transition possibly improve the path?
+            # Step 3: informed (cost-based) rejection if path already exists
             if (
                 cost is not None
                 and sum(self.env.batch_config_cost(q, focal_points)) > cost
-            ):
-                failed_attemps += 1
-                continue
+            ): # If sum of distances from sample to focal points > current best cost
+                failed_attemps += 1 
+                continue # Reject samples outside the informed ellipsoid
 
-            # check if the transition is collision free
+            # Step 4-5: collision check & compute valid next modes
+            # TODO: QUESTION get_next_modes() can be seen as the oracle (returns which modes are reachable next)?
             if self.env.is_collision_free(q, mode):
+                # Current mode is a terminal mode
                 if self.env.is_terminal_mode(mode):
-                    valid_next_modes = None
+                    valid_next_modes = None # No successors (all tasks for all robots completed)
                 else:
-                    # we only cache the ones that are in the valid sequence
+                    # Current mode is not a terminal mode BUT we already know a path to the goal
                     if reached_terminal_mode:
-                        # we cache the next modes only if they are on the mode path
-                        if mode not in self.init_next_modes:
+                        if mode not in self.init_next_modes: # First encounter of mode
+                            # Compute and cache valid next modes on the successful path
                             next_modes = self.env.get_next_modes(q, mode)
                             valid_next_modes = self.mode_validation.get_valid_modes(
                                 mode, list(next_modes)
                             )
                             self.init_next_modes[mode] = valid_next_modes
-
+                        # Use cached init_next_modes instead of recomputing
                         valid_next_modes = self.init_next_modes[mode]
+                    # Current mode is not a terminal mode AND we are still exploring
                     else:
+                        # Compute next modes & validate them (no caching)
                         next_modes = self.env.get_next_modes(q, mode)
                         valid_next_modes = self.mode_validation.get_valid_modes(
                             mode, list(next_modes)
@@ -314,33 +422,36 @@ class CompositePRM(BasePlanner):
                             & self.mode_validation.invalid_next_ids.get(mode, set())
                         ), "There are invalid modes in the 'next_modes'."
 
-                        # if there are no valid next modes, we add this mode to the invalid modes (and remove them from the reached modes)
+                        # Current mode is DEAD end
                         if valid_next_modes == []:
+                            # If no valid next modes exist, mark this mode as invalid & remove from reached modes
                             reached_modes = self.mode_validation.track_invalid_modes(
                                 mode, reached_modes
                             )
 
-                # if the mode is not (anymore) in the reachable modes, do not add this to the transitions
+                # Step 6: handle pruned modes
+                # If mode validation removed this mode, skip adding the transition and update sampling set
                 if mode not in reached_modes:
                     if not reached_terminal_mode:
-                        self.sorted_reached_modes = list(
+                        self.sorted_reached_modes = list( # TODO Actual sampling pool, QUESTION sorted for determinism/reproducibility?
                             sorted(reached_modes, key=lambda m: m.id)
                         )
                         mode_subset_to_sample = self.sorted_reached_modes
                     continue
 
-                # add the transition to the graph
+                # Step 7: add the transition config with its valid next modes to the graph
                 g.add_transition_nodes([(q, mode, valid_next_modes)])
 
-                # this seems to be a very strange way of checking if the transition was added?
-                # but this seems wrong
+                # Step 8: verify it was actually added?
+                # This seems to be a very strange way of checking if the transition was added? (Valentin)
+                # but this seems wrong (Valentin)
                 if (
-                    len(list(chain.from_iterable(g.transition_nodes.values())))
+                    len(list(chain.from_iterable(g.transition_nodes.values()))) # Total transition nodes across all modes
                     > transitions
                 ):
                     transitions += 1
 
-                    # if the mode that we added is the root mode with the state being equal to the root state, do not add it
+                    # If the mode that we added is the root mode with the state being equal to the root state, do not add it
                     if (
                         mode == g.root.state.mode
                         and np.equal(q.state(), g.root.state.q.state()).all()
@@ -348,14 +459,14 @@ class CompositePRM(BasePlanner):
                         reached_modes.discard(mode)
                         self.dummy_start_mode = True
 
-                else:
+                else: # Graph rejected transition node (duplicate)
                     failed_attemps += 1
                     continue
-            else:
-                # self.env.show(False)
+            else: # Graph rejected transition node (collision)
                 failed_attemps += 1
                 continue
-
+            
+            # Step 9: Update reached modes with valid new successor modes (grow set of modes we can sample in)
             if valid_next_modes is not None and len(valid_next_modes) > 0:
                 reached_modes.update(valid_next_modes)
 
@@ -393,16 +504,20 @@ class CompositePRM(BasePlanner):
 
                 return init_search_modes
 
-            # This is called exactly once: when we reach the terminal mode
+            # Trace graph backward from current mode to start mode
+            # Returns sequence of modes first time planner reached terminal mode
+            # Returns empty list if planner already found a path previously 
             init_mode_seq = get_init_mode_sequence(mode, cost)
+
+            # Planner connected start to goal for very first time
+            # (Exploitation) 
             if init_mode_seq and self.config.with_mode_validation:
                 mode_subset_to_sample = init_mode_seq
-
-                # We override sorted_reached modes for the moment, since this is used as the set we sample from
                 self.sorted_reached_modes = mode_subset_to_sample
-
                 reached_terminal_mode = True
                 mode_sampling_type = self.config.mode_sampling_type
+            
+            # (Exploration) -> only update sorted_reached_modes with new valid_next_modes if we are still exploring
             elif len(reached_modes) != len(self.sorted_reached_modes):
                 if not reached_terminal_mode:
                     self.sorted_reached_modes = list(
@@ -416,13 +531,17 @@ class CompositePRM(BasePlanner):
         return reached_modes
 
     def _prune(self, g, current_best_cost):
+        """
+        Discards nodes that don't improve shorter path.
+        """
         num_pts_for_removal = 0
-        focal_points = np.array(
+        focal_points = np.array( # Foci are start and goal nodes
             [g.root.state.q.state(), g.goal_nodes[0].state.q.state()],
             dtype=np.float64,
         )
-        # Remove elements from g.nodes
-        for mode in list(g.nodes.keys()):  # Avoid modifying dict while iterating
+
+        # Remove elements from g.nodes 
+        for mode in list(g.nodes.keys()): # Avoid modifying dict while iterating
             original_count = len(g.nodes[mode])
             g.nodes[mode] = [
                 n
@@ -442,7 +561,8 @@ class CompositePRM(BasePlanner):
                 <= current_best_cost
             ]
             num_pts_for_removal += original_count - len(g.transition_nodes[mode])
-
+        
+        # Remove elements from g.reverse_transition_nodes
         for mode in list(g.reverse_transition_nodes.keys()):
             original_count = len(g.reverse_transition_nodes[mode])
             g.reverse_transition_nodes[mode] = [
@@ -451,14 +571,21 @@ class CompositePRM(BasePlanner):
                 if sum(self.env.batch_config_cost(n.state.q, focal_points))
                 <= current_best_cost
             ]
-            # num_pts_for_removal += original_count - len(g.reverse_transition_nodes[mode])
 
         print(f"Removed {num_pts_for_removal} nodes")
 
     def _refine_approximation(
         self, g, informed_sampler, reached_modes, current_best_path, current_best_cost
     ):
-        # add new batch of nodes
+        """
+        Densify roadmap by adding new samples. After initial path, add more nodes to the graph
+        in strategic locations to find better (shorter) paths. 
+
+        - Uniform transitions -> explore more connectivity
+        - Uniform states -> explore configuration space
+        - Informed samples (if path exists) -> improve current solution
+        """
+        # Step 1: determine batch sizes 
         effective_uniform_batch_size = (
             self.config.uniform_batch_size
             if not self.first_search
@@ -471,7 +598,7 @@ class CompositePRM(BasePlanner):
         )
         self.first_search = False
 
-        # if self.env.terminal_mode not in reached_modes:
+        # Step 2: add transition nodes to connect modes
         print("Sampling transitions")
         reached_modes = self.sample_valid_uniform_transitions(
             g,
@@ -480,56 +607,40 @@ class CompositePRM(BasePlanner):
             reached_modes=reached_modes,
         )
 
-        # g.add_transition_nodes(new_transitions)
-        # print(f"Adding {len(new_transitions)} transitions")
-
+        # Step 3: add regular nodes (not transitions) within modes
         print("Sampling uniform")
         new_states, required_attempts_this_batch = self._sample_valid_uniform_batch(
             g,
             batch_size=effective_uniform_batch_size,
             cost=current_best_cost,
         )
-        g.add_states(new_states)
+
+        g.add_states(new_states) # Adding new valid samples (regular nodes) to graph
         print(f"Adding {len(new_states)} new states")
 
-        # nodes_per_state = []
-        # for m in reached_modes:
-        #     num_nodes = 0
-        #     for n in new_states:
-        #         if n.mode == m:
-        #             num_nodes += 1
-
-        #     nodes_per_state.append(num_nodes)
-
-        # plt.figure("Uniform states")
-        # plt.bar([str(mode) for mode in reached_modes], nodes_per_state)
-        # plt.show()
-
+        # Step 4: active estimation of total volume of C_free
         approximate_space_extent = float(
-            np.prod(np.diff(self.env.limits, axis=0))
-            * len(new_states)
-            / required_attempts_this_batch
+            np.prod(np.diff(self.env.limits, axis=0))   # total config space volume
+            * len(new_states)                           # successful samples
+            / required_attempts_this_batch              # total attempts
         )
 
-        # print(reached_modes)
-
         if not g.goal_nodes:
-            return None
+            return None # Early exit
 
-        # g.compute_lower_bound_to_goal(self.env.batch_config_cost)
-        # g.compute_lower_bound_from_start(self.env.batch_config_cost)
-
+        # Step 5: informed refinement (biased towards informed set around best path -> ellipsoid)
         if (
-            current_best_cost is not None
-            and current_best_path is not None
+            current_best_cost is not None 
+            and current_best_path is not None # If we have a path
             and (
                 self.config.try_informed_sampling
                 or self.config.try_informed_transitions
             )
         ):
+            # Interpolate the current best path
             interpolated_path = interpolate_path(current_best_path)
-            # interpolated_path = current_best_path
 
+            # Sample configurations near current best path 
             if self.config.try_informed_sampling:
                 print("Generating informed samples")
                 new_informed_states = informed_sampler.generate_samples(
@@ -539,10 +650,12 @@ class CompositePRM(BasePlanner):
                     try_direct_sampling=self.config.try_direct_informed_sampling,
                     g=g,
                 )
+                # Add those informed new states to the graph 
                 g.add_states(new_informed_states)
 
                 print(f"Adding {len(new_informed_states)} informed samples")
 
+            # Sample transition nodes near mode transitions in current path
             if self.config.try_informed_transitions:
                 print("Generating informed transitions")
                 new_informed_transitions = informed_sampler.generate_transitions(
@@ -551,11 +664,9 @@ class CompositePRM(BasePlanner):
                     interpolated_path,
                     g=g,
                 )
+                # Add those informed new transition nodes to the graph
                 g.add_transition_nodes(new_informed_transitions)
                 print(f"Adding {len(new_informed_transitions)} informed transitions")
-
-                # g.compute_lower_bound_to_goal(self.env.batch_config_cost)
-                # g.compute_lower_bound_from_start(self.env.batch_config_cost)
 
         return approximate_space_extent
 
@@ -567,15 +678,27 @@ class CompositePRM(BasePlanner):
     ) -> Tuple[List[State] | None, Dict[str, Any]]:
         """
         Main entry point for the PRM planner in composite space.
+        1. Init graph
+        2. Loop: 
+            - Prune nodes outside ellipse (if solution exists)
+            - Add new samples: uniform transitions and states / informed samples (if solution exists)
+            - If terminal mode reached -> search graph (sparse collision check)
+            - Validate path (dense collision check): invlid -> blacklist, valid -> update best path
+            - Shortcut path and add to graph
+            - CHeck early termination
+        3. Return best path found
         """
+        # SETUP
+        # Get start configuration and mode + initialize reached modes
         q0 = self.env.get_start_pos()
         m0 = self.env.get_start_mode()
 
         assert self.env.is_collision_free(q0, m0)
 
-        reached_modes = set([m0])
+        reached_modes = set([m0]) # Set of modes M that we reached so far
         self.sorted_reached_modes = list(sorted(reached_modes, key=lambda m: m.id))
 
+        # Create informed sampler
         informed_sampler = InformedSampling(
             self.env,
             "graph_based",
@@ -583,34 +706,31 @@ class CompositePRM(BasePlanner):
             include_lb=self.config.inlcude_lb_in_informed_sampling,
         )
 
+        # Initialize graph with start state as root
         graph = MultimodalGraph(
-            State(q0, m0),
+            State(q0, m0), # Root: init config and init mode
             lambda a, b: batch_config_dist(a, b, self.config.distance_metric),
             use_k_nearest=self.config.use_k_nearest,
         )
 
+        # Tracking variables
         current_best_cost = None
         current_best_path = None
-
         costs = []
         times = []
-
         add_new_batch = True
-
         start_time = time.time()
-
         resolution = self.env.collision_resolution
-
         all_paths = []
-
         approximate_space_extent = float(np.prod(np.diff(self.env.limits, axis=0)))
-
+        
+        # MAIN PLANNING LOOP
         cnt = 0
         while True:
             if ptc.should_terminate(cnt, time.time() - start_time):
-                break
+                break # Loop until termination condition met
             
-            # prune
+            # If we have solution, remove nodes outside informed ellipsoid (prune)
             if current_best_path is not None and current_best_cost is not None:
                 self._prune(graph, current_best_cost)
 
@@ -618,65 +738,36 @@ class CompositePRM(BasePlanner):
             print(f"Samples: {cnt}; time: {time.time() - start_time:.2f}s; {ptc}")
             print(f"Currently {len(reached_modes)} modes")
 
+            # Count samples before and after to track progress
             samples_in_graph_before = graph.get_num_samples()
 
-            if add_new_batch:
-                approximate_space_extent = self._refine_approximation(
+            # PART 1: SAMPLING REFINEMENT
+            if add_new_batch: # Adds uniform + informed samples
+                approximate_space_extent = self._refine_approximation( 
                     graph, informed_sampler, reached_modes, current_best_path, current_best_cost
                 )
 
-                # update the lower bound to goal cost estimation of nodes.
+                # Update lower bound to goal cost estimation of nodes (for A* heuristic in graph search)
                 graph.compute_lower_bound_to_goal(
                     self.env.batch_config_cost, current_best_cost
                 )
 
             samples_in_graph_after = graph.get_num_samples()
-            cnt += samples_in_graph_after - samples_in_graph_before
+            cnt += samples_in_graph_after - samples_in_graph_before # Update count for ptc
 
-            # we need to keep adding samples until we have reached a terminal mode
-            # with our transitions before we can run a search.
+            # Keep sampling until we have reached a terminal mode
+            # Can't search for a solution else
             reached_terminal_mode = False
             for m in reached_modes:
                 if self.env.is_terminal_mode(m):
                     reached_terminal_mode = True
-
             if not reached_terminal_mode:
-                continue
+                continue # Stop current iteration -> stay in outer loop (sampling)
 
-            # for m in reached_modes:
-            #     plt.figure()
-            #     plt.scatter([a.state.q.state()[0] for a in g.nodes[m]], [a.state.q.state()[1] for a in g.nodes[m]])
-            #     plt.scatter([a.state.q.state()[2] for a in g.nodes[m]], [a.state.q.state()[3] for a in g.nodes[m]])
-            #     # plt.scatter()
-
-            # plt.show()
-
-            # pts_per_mode = []
-            # transitions_per_mode = []
-            # for m in reached_modes:
-            #     num_transitions = 0
-            #     if m in g.transition_nodes:
-            #         num_transitions += len(g.transition_nodes[m])
-
-            #     num_pts = 0
-
-            #     if m in g.nodes:
-            #         num_pts += len(g.nodes[m])
-
-            #     pts_per_mode.append(num_pts)
-            #     transitions_per_mode.append(num_transitions)
-
-            # plt.figure()
-            # plt.bar([str(mode) for mode in reached_modes], pts_per_mode)
-
-            # plt.figure()
-            # plt.bar([str(mode) for mode in reached_modes], transitions_per_mode)
-
-            # plt.show()
-
-            # search over nodes:
-            # 1. search from goal state with sparse check
+            # PART 2: GRAPH SEARCH (search over nodes)
             while True:
+                # Search: A* from root to goal nodes to get candidate path
+                # Too expensive to check every single edge.. 
                 sparsely_checked_path = graph.search(
                     graph.root,
                     graph.goal_nodes,
@@ -686,11 +777,13 @@ class CompositePRM(BasePlanner):
                     approximate_space_extent,
                 )
 
-                # in case this found a path, search with dense check from the other side
+                # PART 3: DENSE VALIDATION
+                # Dense check candidate path (high resolution)
                 if sparsely_checked_path:
-                    add_new_batch = False
-
+                    add_new_batch = False # Found candidate, don't add more samples yet
                     is_valid_path = True
+
+                    # Validate the path with dense edge checks between consecutive nodes
                     for i in range(len(sparsely_checked_path) - 1):
                         n0 = sparsely_checked_path[i]
                         n1 = sparsely_checked_path[i + 1]
@@ -699,7 +792,7 @@ class CompositePRM(BasePlanner):
                         s1 = n1.state
 
                         if n0.id in n1.whitelist:
-                            continue
+                            continue # Skip, already validated this edge (whitelist)
 
                         if not self.env.is_edge_collision_free(
                             s0.q,
@@ -710,25 +803,27 @@ class CompositePRM(BasePlanner):
                         ):
                             print("Path is in collision")
                             is_valid_path = False
-                            # self.env.show(True)
-                            n0.blacklist.add(n1.id)
+                            n0.blacklist.add(n1.id) # Remember invalid edge (blacklist)
                             n1.blacklist.add(n0.id)
-                            break
+                            break # Continune search loop
                         else:
-                            n1.whitelist.add(n0.id)
+                            n1.whitelist.add(n0.id) # Cache valid edge (whitelist)
                             n0.whitelist.add(n1.id)
 
                     if is_valid_path:
                         path = [node.state for node in sparsely_checked_path]
                         new_path_cost = path_cost(path, self.env.batch_config_cost)
+
+                        # Update tracking variables if valid and better than current best                        
                         if (
                             current_best_cost is None
                             or new_path_cost < current_best_cost
                         ):
+                            # Update current best path and cost
                             current_best_path = path
                             current_best_cost = new_path_cost
 
-                            # extract modes
+                            # Extract mode sequence from the path
                             modes = [path[0].mode]
                             for p in path:
                                 if p.mode != modes[-1]:
@@ -736,21 +831,18 @@ class CompositePRM(BasePlanner):
 
                             print("Modes of new path")
                             print([m.task_ids for m in modes])
-                            # print([(m, m.additional_hash_info) for m in modes])
-
-                            # prev_mode = modes[-1].prev_mode
-                            # while prev_mode:
-                            #     print(prev_mode, prev_mode.additional_hash_info)
-                            #     prev_mode = prev_mode.prev_mode
 
                             print(
                                 f"New cost: {new_path_cost} at time {time.time() - start_time}"
                             )
+
+                            # Append costs, times and path
                             costs.append(new_path_cost)
                             times.append(time.time() - start_time)
-
                             all_paths.append(path)
 
+                            # PART 4: SHORTCUTTING
+                            # Try to connect non-adjacent waypoints to remove unnecessary intermediate points
                             if self.config.try_shortcutting:
                                 print("Shortcutting path")
                                 shortcut_path, _ = shortcutting.robot_mode_shortcut(
@@ -763,6 +855,7 @@ class CompositePRM(BasePlanner):
                                     interpolation_resolution=self.config.shortcutting_interpolation_resolution,
                                 )
 
+                                # Remove interpolated points (just used for collision check)
                                 shortcut_path = shortcutting.remove_interpolated_nodes(
                                     shortcut_path
                                 )
@@ -771,6 +864,7 @@ class CompositePRM(BasePlanner):
                                     shortcut_path, self.env.batch_config_cost
                                 )
 
+                                # Update current best path and cost
                                 if shortcut_path_cost < current_best_cost:
                                     print("New cost: ", shortcut_path_cost)
                                     costs.append(shortcut_path_cost)
@@ -783,6 +877,7 @@ class CompositePRM(BasePlanner):
 
                                     interpolated_path = shortcut_path
 
+                                    # Add to graph
                                     for i in range(len(interpolated_path)):
                                         s = interpolated_path[i]
                                         if not self.env.is_collision_free(s.q, s.mode):
@@ -793,38 +888,23 @@ class CompositePRM(BasePlanner):
                                             and interpolated_path[i].mode
                                             != interpolated_path[i + 1].mode
                                         ):
-                                            # add as transition
-                                            graph.add_transition_nodes(
-                                                [
-                                                    (
-                                                        s.q,
-                                                        s.mode,
-                                                        [interpolated_path[i + 1].mode],
-                                                    )
-                                                ]
-                                            )
+                                            # Mode CHANGES -> add as transition
+                                            graph.add_transition_nodes([(s.q, s.mode, [interpolated_path[i + 1].mode])])
                                             pass
                                         else:
+                                            # Mode SAME -> add as regular node
                                             graph.add_states([s])
 
-                        add_new_batch = True
+                        add_new_batch = True # To add more samples in next iteration
+                        break # Exit inner loop
 
-                        # plt.figure()
-
-                        # plt.plot([pt.q.state()[0] for pt in current_best_path], [pt.q.state()[1] for pt in current_best_path], 'o-')
-                        # plt.plot([pt.q.state()[2] for pt in current_best_path], [pt.q.state()[3] for pt in current_best_path], 'o-')
-
-                        # plt.show()
-
-                        break
-
-                else:
+                else: # No path found
                     print("Did not find a solution")
                     add_new_batch = True
-                    break
+                    break # Go back to sampling
 
             if current_best_cost is not None:
-                # check if we might have reached the optimal cost? Straightline connection
+                # Check if we've might reached the optimal cost (straight-line distance)
                 if (
                     np.linalg.norm(
                         current_best_cost
@@ -835,39 +915,12 @@ class CompositePRM(BasePlanner):
                     break
 
             if not optimize and current_best_cost is not None:
-                break
+                break # Return first feasible path (if goal is not to optimize path..)
 
         if len(costs) > 0:
             costs.append(costs[-1])
             times.append(time.time() - start_time)
 
         info = {"costs": costs, "times": times, "paths": all_paths}
-
-        # pts_per_mode = []
-        # transitions_per_mode = []
-        # for m in reached_modes:
-        #     num_transitions = 0
-        #     if m in g.transition_nodes:
-        #         num_transitions += len(g.transition_nodes[m])
-
-        #     num_pts = 0
-
-        #     if m in g.nodes:
-        #         num_pts += len(g.nodes[m])
-
-        #     pts_per_mode.append(num_pts)
-        #     transitions_per_mode.append(num_transitions)
-
-        # plt.figure()
-        # plt.title("pts per mode")
-        # plt.bar([str(mode) for mode in reached_modes], pts_per_mode)
-        # plt.xticks(rotation=90)
-
-        # plt.figure()
-        # plt.title("transitions per mode")
-        # plt.bar([str(mode) for mode in reached_modes], transitions_per_mode)
-        # plt.xticks(rotation=90)
-
-        # plt.show()
 
         return current_best_path, info

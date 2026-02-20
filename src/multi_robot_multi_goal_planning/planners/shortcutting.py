@@ -10,6 +10,9 @@ from multi_robot_multi_goal_planning.problems.planning_env import State, BasePro
 # from multi_robot_multi_goal_planning.problems.configuration import config_dist
 from multi_robot_multi_goal_planning.problems.util import interpolate_path, path_cost
 
+# TODO (Liam) added
+from multi_robot_multi_goal_planning.problems.planning_env import Mode 
+
 
 def single_mode_shortcut(env: BaseProblem, path: List[State], max_iter: int = 1000):
     """
@@ -105,19 +108,26 @@ def robot_mode_shortcut(
     
     costs = [path_cost(new_path, env.batch_config_cost)]
     times = [0.0]
-
-    # for p in new_path:
-    #     if not env.is_collision_free(p.q, p.mode):
-    #         print("startpath is in collision")
-
     start_time = time.time()
 
     cnt = 0
-    # for iter in range(max_iter):
     max_attempts = 250 * 10
     iter = 0
-
     rr_robot = 0
+
+    # TODO (Liam) Helper function to check if mode contains skill task for given robot
+    def mode_contains_skill(env: BaseProblem, mode: Mode, robot_index: int) -> bool:
+        """
+        Check if the mode corresponds to a skill task for the robot_index
+        Need this helper function because global shortcutter has no other way knowing
+        about skill segments
+        """
+        task_id = mode.task_ids[robot_index]
+        if task_id is None:
+            return False
+        task = env.tasks[task_id]
+        contains_skill = getattr(task, "skill", None) is not None
+        return contains_skill
 
     while True:
         iter += 1
@@ -128,18 +138,12 @@ def robot_mode_shortcut(
         j = np.random.randint(0, len(new_path))
 
         if i > j:
-            q = i
-            i = j
-            j = q
+            i, j = j, i
 
         if abs(j - i) < 2:
             continue
 
-        # robots_to_shortcut = [r for r in range(len(env.robots))]
-        # random.shuffle(robots_to_shortcut)
-        # # num_robots = np.random.randint(0, len(robots_to_shortcut))
-        # num_robots = 1
-        # robots_to_shortcut = robots_to_shortcut[:num_robots]
+        # Choose (one) robot to shortcut
         if robot_choice == "round_robin":
             robots_to_shortcut = [rr_robot % len(env.robots)]
             rr_robot += 1
@@ -147,17 +151,23 @@ def robot_mode_shortcut(
             robots_to_shortcut = [np.random.randint(0, len(env.robots))]
 
         can_shortcut_this = True
-        for r in robots_to_shortcut:
+        for r in robots_to_shortcut: # Only one robot in the list!
+            # Check 1: must be same task id at endpoints
             if new_path[i].mode.task_ids[r] != new_path[j].mode.task_ids[r]:
                 can_shortcut_this = False
                 break
-
+            # TODO (Liam) Check if [i,j] are part of skill segment
+            # Check 2: do not touch any part of a skill trajectory  
+            for k in range(i, j+1):
+                if mode_contains_skill(env, new_path[k].mode, r):
+                    can_shortcut_this = False
+                    break
+            if not can_shortcut_this:
+                # TODO (Liam) Stop checking further robots? (if multiple robots in list)
+                # Because we are doing joint shortcut (simultaneously for every robot in list)
+                break 
         if not can_shortcut_this:
-            continue
-
-        # if not env.is_path_collision_free(new_path[i:j], resolution=0.01, tolerance=0.01):
-        #     print("path is not collision free")
-        #     env.show(True)
+            continue # Skip to next [i,j] if can't shortcut
 
         q0 = new_path[i].q
         q1 = new_path[j].q
@@ -178,7 +188,6 @@ def robot_mode_shortcut(
 
             r_cnt = 0
             for r in range(len(env.robots)):
-                # print(r, i, j, k)
                 dim = env.robot_dims[env.robots[r]]
                 if r in robots_to_shortcut:
                     # we assume that we double the mode switch configurations
@@ -187,15 +196,9 @@ def robot_mode_shortcut(
                     else:
                         q_interp = q0_tmp[r] + diff_tmp[r] * k
                     q[r_cnt : r_cnt + dim] = q_interp
-                # else:
-                #     q[r_cnt : r_cnt + dim] = new_path[i + k].q[r]
 
                 r_cnt += dim
 
-            # print(tmp)
-            # print(q)
-
-            # print(q)
             path_element.append(
                 State(q0.from_flat(q), new_path[i + k].mode)
             )
@@ -204,7 +207,6 @@ def robot_mode_shortcut(
         if path_cost(path_element, env.batch_config_cost) >= path_cost(
             new_path[i : j + 1], env.batch_config_cost
         ):
-            # print(f"{cnt} does not improve cost")
             continue
 
         assert np.linalg.norm(path_element[0].q.state() - q0.state()) < 1e-6
@@ -217,14 +219,6 @@ def robot_mode_shortcut(
         ):
             for k in range(j - i + 1):
                 new_path[i + k].q = path_element[k].q
-
-                # if not np.array_equal(new_path[i+k].mode, path_element[k].mode):
-                # print('fucked up')
-        # else:
-        #     print("in colllision")
-        # env.show(True)
-
-        # print(i, j, len(path_element))
 
         current_time = time.time()
         times.append(current_time - start_time)

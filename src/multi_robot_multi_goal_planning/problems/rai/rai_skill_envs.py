@@ -80,7 +80,7 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
                 [self.robots[0]],
                 SingleGoal(post_screw_pose),
                 frames=["table", "obj1"],
-                skill = JogJoint(speed=np.pi/2., idx=6, duration=2.) # just moving the final joint for a fixed time
+                skill = JogJoint(speed=np.pi/2., idx=5, duration=2.) # just moving the final joint for a fixed time
             ),
             Task(
                 "terminal",
@@ -98,8 +98,11 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
 
         BaseModeLogic.__init__(self)
 
-        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE  
+        # TODO (Liam) AttributeError: 'rai_single_agent_screw' object has no attribute 'safe_pose'
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # Debugging for single agent timed skill
 @register("rai.single_agent_drawing")
@@ -150,7 +153,10 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
+        # TODO (Liam) AttributeError: 'rai_single_agent_screw' object has no attribute 'safe_pose'
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # TODO unfinished
 @register("rai.single_agent_lego")
@@ -206,7 +212,6 @@ class rai_single_agent_lego(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
 
 # TODO: enable mode to only plan for a subset of dofs
 @register("rai.single_agent_pick_and_place")
@@ -271,6 +276,10 @@ class rai_single_agent_pick_and_place(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+        # TODO (Liam) AttributeError: 'rai_single_agent_screw' object has no attribute 'safe_pose'
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # TODO unfinished
 @register("rai.single_agent_scripted_insert")
@@ -313,7 +322,6 @@ class rai_multi_agent_pick_and_place(SequenceMixin, rai_env):
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
 
-
 # TODO unfinished
 # multi agent rearrangement with skills
 @register("rai.multi_agent_stacking")
@@ -344,7 +352,6 @@ class rai_multi_agent_stacking(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
 
 # TODO unfinished
 # multi agent rearrangement with skills
@@ -405,7 +412,6 @@ class rai_multi_agent_insert(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
 
 # TODO unfinished
 # four robot, same welding env as before
@@ -545,6 +551,10 @@ class rai_single_agent_bin_picking(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+        # TODO (Liam) AttributeError: 'rai_single_agent_screw' object has no attribute 'safe_pose'
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # TODO unfinished
 # pick 'any' item from a bin

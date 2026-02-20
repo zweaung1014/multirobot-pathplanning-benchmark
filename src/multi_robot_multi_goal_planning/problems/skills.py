@@ -21,7 +21,7 @@ class SkillRolloutResult:
   distributions: Optional[List] = None # Later with stochastic skills?
   # ...
 
-# abstract class for skills.
+# abstract class for skills. 
 class DeterministicBaseSkill(ABC):
   def __init__(self):
     pass
@@ -76,11 +76,11 @@ class BaseDeterministicTimedSkill(ABC):
 
   # TODO: should likely simply merge q and t to 'state'
   @abstractmethod
-  def step(self, q, t, env):
+  def step(self, t, q, env):
     raise NotImplementedError
 
   @abstractmethod
-  def done(self, q, t, env):
+  def done(self, t, q, env):
     pass
 
   def rollout(self, q_init, env, t0, dt=0.1):
@@ -203,7 +203,7 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
   def _get_desired_pose_at_time(self, t):
     return self.line_start_pos + t * (self.line_goal_pos - self.line_start_pos)
 
-  def step(self, t, q, env):
+  def step(self, t, q, env, dt=0.1):
     # look up where we are on the trajctory
     desired_next_pos = self._get_desired_pose_at_time(t)
 
@@ -255,7 +255,7 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
     return q_new
 
   def done(self, t, q, env):
-    desired_next_pos = self._get_desired_pose_at_time(self.duration)
+    desired_position = self._get_desired_position_at_time(self.duration)
 
     env.C.setJointState(q)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
@@ -329,8 +329,8 @@ class JogJoint(BaseDeterministicTimedSkill):
     self.duration = duration
 
   def step(self, t, q, env, dt=0.1):
-    qn = q
-    qn[idx] += speed
+    qn = q.copy()
+    qn[self.idx] += self.speed * dt
     return qn
 
   def done(self, t, q, env, dt=0.1):
