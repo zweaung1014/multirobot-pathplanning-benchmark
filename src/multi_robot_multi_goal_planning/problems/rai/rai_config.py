@@ -8006,10 +8006,10 @@ def make_single_agent_drawing(view: bool = False):
         ry.ST.box, size=[20, 20, 0.02, 0.005]
     ).setColor([0.9, 0.9, 0.9]).setContact(0)
 
-    table = (
+    table = ( # Top surface 0.23
         C.addFrame("table")
-        .setPosition([0, 0, 0.2])
-        .setShape(ry.ST.box, size=[2, 3, 0.06, 0.005])
+        .setPosition([0, 0, 0.2]) # Table center 0.2
+        .setShape(ry.ST.box, size=[2, 3, 0.06, 0.005]) # Half-thickness 0.03
         .setColor([0.6, 0.6, 0.6])
         .setContact(1)
     )

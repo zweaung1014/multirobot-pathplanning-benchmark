@@ -437,7 +437,7 @@ class CompositePRM(BasePlanner):
                             sorted(reached_modes, key=lambda m: m.id)
                         )
                         mode_subset_to_sample = self.sorted_reached_modes
-                    continue
+                    continue # Skip rest of loop as mode is no longer valid
 
                 # Step 7: add the transition config with its valid next modes to the graph
                 g.add_transition_nodes([(q, mode, valid_next_modes)])
@@ -778,12 +778,12 @@ class CompositePRM(BasePlanner):
                 )
 
                 # PART 3: DENSE VALIDATION
-                # Dense check candidate path (high resolution)
+                # Dense collision check of candidate path (high resolution)
                 if sparsely_checked_path:
-                    add_new_batch = False # Found candidate, don't add more samples yet
+                    add_new_batch = False # Found candidate, don't add more samples
                     is_valid_path = True
 
-                    # Validate the path with dense edge checks between consecutive nodes
+                    # Validate the path with dense edge checks between consecutive pair of nodes
                     for i in range(len(sparsely_checked_path) - 1):
                         n0 = sparsely_checked_path[i]
                         n1 = sparsely_checked_path[i + 1]
@@ -810,7 +810,7 @@ class CompositePRM(BasePlanner):
                             n1.whitelist.add(n0.id) # Cache valid edge (whitelist)
                             n0.whitelist.add(n1.id)
 
-                    if is_valid_path:
+                    if is_valid_path: # Path passed all collision checks
                         path = [node.state for node in sparsely_checked_path]
                         new_path_cost = path_cost(path, self.env.batch_config_cost)
 
@@ -823,7 +823,7 @@ class CompositePRM(BasePlanner):
                             current_best_path = path
                             current_best_cost = new_path_cost
 
-                            # Extract mode sequence from the path
+                            # Extract mode sequence from the path (for reporting)
                             modes = [path[0].mode]
                             for p in path:
                                 if p.mode != modes[-1]:
@@ -877,7 +877,8 @@ class CompositePRM(BasePlanner):
 
                                     interpolated_path = shortcut_path
 
-                                    # Add to graph
+                                    # Check shortcutted path (mode changes?)
+                                    # Add path to graph
                                     for i in range(len(interpolated_path)):
                                         s = interpolated_path[i]
                                         if not self.env.is_collision_free(s.q, s.mode):

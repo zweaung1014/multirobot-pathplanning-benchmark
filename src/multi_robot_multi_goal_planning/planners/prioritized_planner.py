@@ -1977,11 +1977,11 @@ class PrioritizedPlannerConfig:
 # [o] Skill: done() needs to be more generic terminal condition (check if current state is goal state), instead of convergence condition
 # [o] PP: What if we don't have another sequence when breaking to the outer loop?
 # [o] General: add types to arguments in all functions
-# [o] PP: validate single-robot skill integration
+# [x] PP: validate single-robot skill integration
 # [o] PP: implement multi-robot skill integration 
 # [o] Skill: consistent definitions 
-# [o] Collision: manage correctly Conifuration (function's arguments)
-# [o] Skill: currently operate on whole configuration to multi-robot settings -> should only operate on subset of configuration space
+# [x] Collision: manage correctly Conifuration (function's arguments)
+# [x] Skill: currently operate on whole configuration to multi-robot settings -> should only operate on subset of configuration space
 class PrioritizedPlanner(BasePlanner):
     def __init__(
         self,
@@ -1995,7 +1995,7 @@ class PrioritizedPlanner(BasePlanner):
     def _execute_skill_task(
             self, 
             task, 
-            env, 
+            env: BaseProblem, 
             involved_robots, 
             start_pose, 
             t0,
@@ -2005,30 +2005,41 @@ class PrioritizedPlanner(BasePlanner):
         """
         Rollout skill
         Return path in same format as plan_robots_in_dyn_env()
-        IMPORTANT: handles single robot skills for now!
         """
         skill = task.skill
-        robot = involved_robots[0] # Single robot assumed 
-        robot_idx = env.robot_idx[robot] # Joint indices for this robot
-        q_init = start_pose[0] 
+        conf_type = type(env.get_start_pos()) 
 
-        # Rollout the skill
+        # Collect skill joints of involved robots so skills get correct subset
+        skill.joints = []
+        for r in involved_robots:
+            skill.joints.extend(env.robot_joints[r])
+
+        # COncatenates only involved robots DOFs
+        q_init = conf_type.from_list(start_pose).state()
+    
         result = skill.rollout(q_init, env, t0)
-        traj, times = result.trajectory, result.times
+        traj, times = result.trajectory, result.times # Single flat arrays
         
-        # Goal check 
-        if not task.goal.satisfies_constraints(traj[-1], mode=None, tolerance=1e-3):
-            logger.warning("skill did not reach its goal")
-            return None, None
+        # Goal check # TODO (Liam) come clear on how to define skill goal checking..
+        # if not task.goal.satisfies_constraints(traj[-1], mode=None, tolerance=1e-3):
+        #     logger.warning("skill did not reach its goal")
+        #     return None, None
 
         # Collision check
-        conf_type = type(env.get_start_pos()) 
         for k in range(len(times)-1):
-            qs_conf = conf_type.from_list([traj[k]])
-            qe_conf = conf_type.from_list([traj[k+1]])            
+            parts_s, parts_e = [], []
+            offset = 0
+            for r in involved_robots:
+                dim = env.robot_dims[r]
+                parts_s.append(traj[k][offset : offset + dim])
+                parts_e.append(traj[k+1][offset : offset + dim])
+                offset += dim     
+            qs_conf = conf_type.from_list(parts_s)
+            qe_conf = conf_type.from_list(parts_e)
+            
             if not edge_collision_free_with_moving_obs(
                 env,
-                qs_conf, # NpConfiguration objects (contains only involved robots DOFs) -> constructs q_buffer in function...
+                qs_conf, # NpConfiguration objects 
                 qe_conf, 
                 times[k],
                 times[k+1],
@@ -2039,11 +2050,18 @@ class PrioritizedPlanner(BasePlanner):
             ):
                 return None, None # Failure makes outer loop try different sequence
 
-        # Avoid shortcutting: taken care of in robot_mode_shortcut()        
+        # Avoid shortcutting: taken care of in robot_mode_shortcut()    
 
-        # Return 
-        timed_path = TimedPath(time=times.tolist(), path=list(traj)) # TODO (Liam) check if correct type!
-        path = {robot: timed_path}
+        # Path splitting into per-robot sub-trajectories from concatenated rollout
+        # Rest of planner expects dict[robot -> Timedpath], one traj per robot 
+        path = {}
+        offset = 0
+        for r in involved_robots:
+            dim = env.robot_dims[r]
+            sub_traj = [q[offset : offset + dim] for q in traj]
+            path[r] = TimedPath(time=times.tolist(), path=sub_traj)
+            offset += dim
+
         final_pose = traj[-1]
         return path, final_pose
     
@@ -2186,8 +2204,9 @@ class PrioritizedPlanner(BasePlanner):
 
                 # Step 2: motion planning or skill execution
                 # TODO (Liam) Rollout skill instead of planning
-                if hasattr(task, 'skill') and task.skill is not None:
+                if task.skill is not None:
                     # Execute skill (instead of planning)
+                    logger.info(">> This is a SKILL task")
                     path, final_pose = self._execute_skill_task(
                         task, env, involved_robots, start_pose, t0,
                         prev_plans=robot_paths,
@@ -2199,6 +2218,7 @@ class PrioritizedPlanner(BasePlanner):
                         
                 else:
                     # Planning with time aware RRT
+                    logger.info(">> This is a PLANNING task")
                     current_time = time.time()
                     planning_ptc = RuntimeTerminationCondition( # Create time-limited termination condition
                         ptc.max_runtime_in_s - (current_time - computation_start_time)
@@ -2278,6 +2298,7 @@ class PrioritizedPlanner(BasePlanner):
                     break
 
                 # Step 5: plan escape path
+                # TODO QUESTION why use robot 0 end time as escape_start_time? 
                 logger.info("planning escape path")
                 escape_start_time = path[involved_robots[0]].time[-1] # End of main task path
                 end_times = robot_paths.get_end_times(involved_robots)

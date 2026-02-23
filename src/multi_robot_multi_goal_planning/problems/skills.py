@@ -24,6 +24,7 @@ class SkillRolloutResult:
 # abstract class for skills. 
 class DeterministicBaseSkill(ABC):
   def __init__(self):
+    self.joints = None # Store joint names when passed by planner
     pass
 
   @abstractmethod
@@ -72,6 +73,7 @@ class StochasticBaseSkill(ABC):
 # abstract class for deterministic timed skills.
 class BaseDeterministicTimedSkill(ABC):
   def __init__(self):
+    self.joints = None
     pass
 
   # TODO: should likely simply merge q and t to 'state'
@@ -83,8 +85,6 @@ class BaseDeterministicTimedSkill(ABC):
   def done(self, t, q, env):
     pass
   
-  # TODO wrong use of t_norm in done -> checks if t_norm \in [0,1] > self.duration -> dead code
-  # TODO could make done() check t_norm >= 1.0?  
   def rollout(self, q_init, env, t0, dt=0.1):
     """
     Rollout deterministic timed skill for fixed duration
@@ -100,7 +100,7 @@ class BaseDeterministicTimedSkill(ABC):
         times.append(times[-1] + dt)
         trajectory.append(q)
         
-        if self.done(t_norm, q, env):
+        if self.done(t_norm, q, env): # TODO (Liam) uses t_norm not self.duration
             break
     
     return SkillRolloutResult(
@@ -130,7 +130,7 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
 
   def step(self, q, env, dt=0.1):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, self.goal_position)
     
     # compute pid law
@@ -142,7 +142,7 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
     return q_new
 
   def done(self, q, env):
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, self.goal_position)
     
     if np.linalg.norm(err) < 1e-3:
@@ -160,7 +160,7 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
   def step(self, q, env, dt=0.1):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
     
     # compute pid law
@@ -173,7 +173,7 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
   def done(self, q, env):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
 
     if np.linalg.norm(err) < 1e-3:
@@ -209,7 +209,7 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
     # look up where we are on the trajctory
     desired_next_pos = self._get_desired_pose_at_time(t)
 
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, desired_next_pos)
     
     # compute pid law
@@ -222,7 +222,7 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
   def done(self, t, q, env):
     desired_next_pos = self._get_desired_pose_at_time(self.duration)
 
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, desired_next_pos)
     
     if np.linalg.norm(err) < 1e-3:
@@ -244,7 +244,7 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
 
   def step(self, t, q, env, dt=0.1):
     # look up where we are on the trajctory and get next position
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
 
     desired_position = self._get_desired_position_at_time(t)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
@@ -259,7 +259,7 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
   def done(self, t, q, env):
     desired_position = self._get_desired_position_at_time(self.duration)
 
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
 
     if np.linalg.norm(err) < 1e-3:
@@ -324,7 +324,6 @@ class Handover(DeterministicBaseSkill):
   def done(self, q, env):
     raise NotImplementedError
 
-# TODO!!! either use real or normalized time but not mix of both (in done)!
 class JogJoint(BaseDeterministicTimedSkill):
   def __init__(self, speed, idx, duration):
     self.speed = speed

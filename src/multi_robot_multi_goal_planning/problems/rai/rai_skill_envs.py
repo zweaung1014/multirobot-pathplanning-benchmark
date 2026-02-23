@@ -117,7 +117,8 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
 
         home_pose = self.C.getJointState()
 
-        table_height = 0.1
+        #table_height = 0.1 
+        table_height = 0.24 # Table top at z = 0.23
         pts = [
             np.array([-0.5, 0, table_height]), 
             np.array([0.5, 0, table_height])
@@ -133,7 +134,7 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
             Task(
                 "draw",
                 ["a1"],
-                SingleGoal(poses[0]), # TODO: figure out how to do skill goal checking
+                SingleGoal(poses[0]), # TODO: figure out how to do skill goal checking (Valentin)
                 skill = EndEffectorPositionFollowing(*pts, "a1_stick_ee")
             ),
             Task(
@@ -153,7 +154,7 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-        # TODO (Liam) added because AttributeError: 'rai_single_agent_screw' object has no attribute 'safe_pose'
+        # TODO (Liam) added because AttributeError: object has no attribute 'safe_pose'
         self.safe_pose = {}
         for r in self.robots:
             self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
