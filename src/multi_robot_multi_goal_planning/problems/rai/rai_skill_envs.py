@@ -58,6 +58,8 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
 
         rai_env.__init__(self)
 
+        self.manipulating_env = True
+
         home_pose = self.C.getJointState()
 
         post_screw_pose = pre_screw_pose * 1.
@@ -68,6 +70,7 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
                 "pick",
                 [self.robots[0]],
                 SingleGoal(pick_pose),
+                type="pick",
                 frames=["a1_ur_gripper_center", "obj1"]
             ),
             Task(
@@ -80,6 +83,7 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
                 [self.robots[0]],
                 SingleGoal(post_screw_pose),
                 frames=["table", "obj1"],
+                type="place",
                 skill = JogJoint(speed=np.pi/2., idx=6, duration=2.) # just moving the final joint for a fixed time
             ),
             Task(
@@ -175,6 +179,7 @@ class rai_single_agent_lego(SequenceMixin, rai_env):
                 "pick",
                 ["a1"],
                 SingleGoal(pick_pose),
+                type="pick",
                 frames=["a1_ur_ee_marker", "obj1"]
             ),
             Task(
@@ -187,6 +192,7 @@ class rai_single_agent_lego(SequenceMixin, rai_env):
                 ["a1"],
                 SingleGoal(np.array([0.5, 0.5, 0])),
                 skill = EndEffectorPositionFollowing(lego_placement_path),
+                type="place",
                 frames=["table", "obj1"]
             ),
             Task(
