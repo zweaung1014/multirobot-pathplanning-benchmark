@@ -84,7 +84,7 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
                 SingleGoal(post_screw_pose),
                 frames=["table", "obj1"],
                 type="place",
-                skill = JogJoint(speed=np.pi/2., idx=6, duration=2.) # just moving the final joint for a fixed time
+                skill = JogJoint(speed=np.pi/2., idx=5, duration=2.) # just moving the final joint for a fixed time
             ),
             Task(
                 "terminal",
@@ -102,8 +102,10 @@ class rai_single_agent_screw(SequenceMixin, rai_env):
 
         BaseModeLogic.__init__(self)
 
-        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE  
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # Debugging for single agent timed skill
 @register("rai.single_agent_drawing")
@@ -118,7 +120,8 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
 
         home_pose = self.C.getJointState()
 
-        table_height = 0.1
+        #table_height = 0.1 
+        table_height = 0.24 # Table top at z = 0.23
         pts = [
             np.array([-0.5, 0, table_height]), 
             np.array([0.5, 0, table_height])
@@ -154,7 +157,9 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # TODO unfinished
 @register("rai.single_agent_lego")

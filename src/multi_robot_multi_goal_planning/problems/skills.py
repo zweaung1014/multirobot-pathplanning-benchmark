@@ -3,14 +3,28 @@ import numpy as np
 from abc import ABC, abstractmethod
 import robotic
 
+# TODO (Liam)
+from dataclasses import dataclass
+from typing import Optional, List
+
 ##########
 # Note: might be a cooler demo if we also have skills that are 'env aware'
 # might also be more interesting planning wise.
 ##########
 
-# abstract class for skills.
+# TODO (Liam) standardized output
+@dataclass
+class SkillRolloutResult:
+  trajectory: np.ndarray
+  times: np.ndarray
+  is_deterministic: bool = True
+  distributions: Optional[List] = None # Later with stochastic skills?
+  # ...
+
+# abstract class for skills. 
 class DeterministicBaseSkill(ABC):
   def __init__(self):
+    self.joints = None # Store joint names when passed by planner
     pass
 
   @abstractmethod
@@ -21,6 +35,27 @@ class DeterministicBaseSkill(ABC):
   @abstractmethod
   def done(self, q, env):
     pass
+
+  def rollout(self, q_init, env, t0, dt=0.1, max_steps=1000):
+    """
+    Rollout deterministic untimed skill till convergence
+    """
+    q = q_init.copy()
+    trajectory = [q]
+    times = [t0]
+    
+    for _ in range(max_steps):
+        q = self.step(q, env, dt)
+        times.append(times[-1] + dt)
+        trajectory.append(q)
+        
+        if self.done(q, env):
+            break
+    
+    return SkillRolloutResult(
+        trajectory=np.array(trajectory),
+        times=np.array(times),
+    )
 
 # abstract class for stochastic skills.
 class StochasticBaseSkill(ABC):
@@ -38,16 +73,40 @@ class StochasticBaseSkill(ABC):
 # abstract class for deterministic timed skills.
 class BaseDeterministicTimedSkill(ABC):
   def __init__(self):
+    self.joints = None
     pass
 
   # TODO: should likely simply merge q and t to 'state'
   @abstractmethod
-  def step(self, q, t, env):
+  def step(self, t, q, env):
     raise NotImplementedError
 
   @abstractmethod
-  def done(self, q, t, env):
+  def done(self, t, q, env):
     pass
+  
+  def rollout(self, q_init, env, t0, dt=0.1):
+    """
+    Rollout deterministic timed skill for fixed duration
+    """
+    n_steps = max(1, round(self.duration / dt))
+    q = q_init.copy()
+    trajectory = [q]
+    times = [t0]
+
+    for i in range(n_steps):
+        t_norm = (i + 1) / n_steps
+        q = self.step(t_norm, q, env, dt)
+        times.append(times[-1] + dt)
+        trajectory.append(q)
+        
+        if self.done(t_norm, q, env): # TODO (Liam) uses t_norm not self.duration
+            break
+    
+    return SkillRolloutResult(
+        trajectory=np.array(trajectory),
+        times=np.array(times),
+    )
 
 # abstract class for stochastic timed skills.
 class BaseStochasticTimedSkill(ABC):
@@ -71,7 +130,7 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
 
   def step(self, q, env, dt=0.1):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, self.goal_position)
     
     # compute pid law
@@ -83,7 +142,7 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
     return q_new
 
   def done(self, q, env):
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, self.goal_position)
     
     if np.linalg.norm(err) < 1e-3:
@@ -101,7 +160,7 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
   def step(self, q, env, dt=0.1):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
     
     # compute pid law
@@ -114,7 +173,7 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
   def done(self, q, env):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
 
     if np.linalg.norm(err) < 1e-3:
@@ -146,11 +205,11 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
   def _get_desired_pose_at_time(self, t):
     return self.line_start_pos + t * (self.line_goal_pos - self.line_start_pos)
 
-  def step(self, t, q, env):
+  def step(self, t, q, env, dt=0.1):
     # look up where we are on the trajctory
     desired_next_pos = self._get_desired_pose_at_time(t)
 
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, desired_next_pos)
     
     # compute pid law
@@ -163,7 +222,7 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
   def done(self, t, q, env):
     desired_next_pos = self._get_desired_pose_at_time(self.duration)
 
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, desired_next_pos)
     
     if np.linalg.norm(err) < 1e-3:
@@ -185,7 +244,7 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
 
   def step(self, t, q, env, dt=0.1):
     # look up where we are on the trajctory and get next position
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
 
     desired_position = self._get_desired_position_at_time(t)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
@@ -198,9 +257,9 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
     return q_new
 
   def done(self, t, q, env):
-    desired_next_pos = self._get_desired_pose_at_time(self.duration)
+    desired_position = self._get_desired_position_at_time(self.duration)
 
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.position, [self.ee_name], 1, desired_position)
 
     if np.linalg.norm(err) < 1e-3:
@@ -272,12 +331,14 @@ class JogJoint(BaseDeterministicTimedSkill):
     self.duration = duration
 
   def step(self, t, q, env, dt=0.1):
-    qn = q
-    qn[idx] += speed
+    qn = q.copy()
+    qn[self.idx] += self.speed * dt
     return qn
 
   def done(self, t, q, env, dt=0.1):
-    if t > self.duration:
+    #if t > self.duration:
+    #print(t%10)
+    if t > 1.0:
       return True
 
     return False
