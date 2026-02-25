@@ -448,18 +448,6 @@ class Tree:
         
         return self.nodes[batch_idx]
 
-    def get_near_neighbors(self, node: Node, k: int, v_max) -> List[Node]:
-        """Find closest k-nodes in the tree to connect new sample to"""
-        node_list = self.nodes
-        dists = self.batch_dist_fun(node, self.nodes, v_max)
-
-        k_clip = min(k, len(node_list) - 1) # Conservative "-1" to avoid returning the node itself if query node already in dataset
-        topk = np.argpartition(dists, k_clip)[:k_clip] # Sorting in O(N) with k_clip smallest moved to front
-        topk[np.argsort(dists[topk])] # TODO dead code -> creates new sorted array, needs assignment: topk = ...
-
-        best_nodes = [node_list[i] for i in topk] # TODO here topk is correct but UNORDERED set of k neighbours
-        return best_nodes
-
     def add_node(self, new_node: Node, parent: Optional[Node]) -> None:
         """Add a node to the tree and establish parent-child relationship"""
         node_list = self.nodes
