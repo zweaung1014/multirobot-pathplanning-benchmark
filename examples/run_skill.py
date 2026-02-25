@@ -1,5 +1,5 @@
 from multi_robot_multi_goal_planning.problems import get_env_by_name
-from multi_robot_multi_goal_planning.problems.skills import EEPositionGoalReaching, EEPoseGoalReaching, EndEffectorPositionFollowing
+from multi_robot_multi_goal_planning.problems.skills import EEPositionGoalReaching, EEPoseGoalReaching, EndEffectorPositionFollowing, DualRobotGrasping
 
 
 import numpy as np
@@ -36,6 +36,25 @@ def timed_skill():
       env.C.setJointState(qnew)
       env.C.view(True)
 
+
+def dual_arm_skill():
+    np.random.seed(0)
+    random.seed(0)
+    
+    env = get_env_by_name("rai.dual_arm_transport")
+    env.C.setJointState(env.pick_pose)
+
+    skill = env.tasks[1].skill
+
+    N = 100
+    for i in range(N):
+      qnew = skill.step(i / N, env.C.getJointState(), env)
+
+      env.C.setJointState(qnew)
+      env.C.view(True)
+
+
 if __name__ == "__main__":
-    base_skill()
+    # base_skill()
     # timed_skill()
+    dual_arm_skill()

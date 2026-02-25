@@ -6,6 +6,7 @@ import robotic
 # TODO (Liam)
 from dataclasses import dataclass
 from typing import Optional, List
+from scipy.spatial.transform import Rotation as R
 
 ##########
 # Note: might be a cooler demo if we also have skills that are 'env aware'
@@ -267,32 +268,74 @@ class EndEffectorPositionFollowing(BaseDeterministicTimedSkill):
 
     return False
 
+def compute_end_effector_pose(obj_pose, transform):
+  p_o = obj_pose[:3]
+  q_o = obj_pose[3:]
+
+  p_eo = transform[:3]
+  q_eo = transform[3:]
+
+  R_wo = R.from_quat(q_o, scalar_first=True)
+  R_eo = R.from_quat(q_eo, scalar_first=True)
+
+  # Invert EE→object
+  R_oe = R_eo.inv()
+  p_oe = -R_oe.apply(p_eo)
+
+  # Compose: ^wT_e = ^wT_o * ^oT_e
+  R_we = R_wo * R_oe
+  p_we = p_o + R_wo.apply(p_oe)
+
+  return np.concatenate([p_we, R_we.as_quat(scalar_first=True)])
+
 # cool because it includes multiple robots.
 class DualRobotGrasping(BaseDeterministicTimedSkill):
-  def __init__(self, ee_names, obj_name, obj_start_pos, obj_end_pos):
-    self.obj_start_pos = obj_start_pos
-    self.obj_end_pos = obj_end_pos
+  """Skill for a given object trajectory, where the robots end effectors keep a constant 
+  transformation to the object.
+  """
+  def __init__(self, ee_names, transformations, obj_start_pose, obj_end_pose):
+    self.obj_start_pose = obj_start_pose
+    self.obj_end_pose = obj_end_pose
     
-    self.ee_names = []
-    self.obj_name = obj_name
+    self.ee_names = ee_names
+
+    # we assume that ee_pose + transformation == obj_pose
+    self.transformation = transformations
+
+    self.num_ik_iters = 2
 
   def _get_desired_obj_pose_at_time(self, t):
-    return self.obj_start_pos + t * (self.obj_end_pos - self.obj_start_pos)
+    # TODO: check if we need to do the quaternion interpolation properly
+    return self.obj_start_pose + t * (self.obj_end_pose - self.obj_start_pose)
 
   def step(self, t, q, env, dt=0.1):
+    env.C.setJointState(q)
+
     # get desired position of obj at time
-    desired_pos = self._get_desired_obj_pose_at_time(t)
+    desired_pose = self._get_desired_obj_pose_at_time(t)
     
-    # get ee-pos
-    # get jacobians
-    # do ik to compute the positions of the end effectors
-    raise NotImplementedError
+    q_new = q
+
+    # This implementation is somewhat inefficient/computationally expensive as is
+    for i in range(len(self.ee_names)):
+      desired_ee_pose = compute_end_effector_pose(desired_pose, self.transformation[i])
+      for j in range(self.num_ik_iters):
+        env.C.setJointState(q_new)
+        [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_names[i]], 1, desired_ee_pose)
+        
+        q_dot = np.linalg.pinv(jac) @ err
+
+        # integrate to get next pos
+        q_new = q_new - dt * q_dot
+    
+    return q_new
 
   def done(self, t, q, env):
+    # TODO: implement -> deal with time
     raise NotImplementedError
 
 class Insertion(StochasticBaseSkill):
-  def __init__():
+  def __init__(self):
     pass
 
   def step(self, q, env, dt=0.1):
@@ -305,7 +348,7 @@ class Insertion(StochasticBaseSkill):
     raise NotImplementedError
 
 class DexterousGrasping(StochasticBaseSkill):
-  def __init__():
+  def __init__(self):
     pass
 
   def step(self, q, env, dt=0.1):
@@ -315,7 +358,7 @@ class DexterousGrasping(StochasticBaseSkill):
     raise NotImplementedError
 
 class Handover(DeterministicBaseSkill):
-  def __init__():
+  def __init__(self):
     pass
 
   def step(self, q, env, dt=0.1):
@@ -325,6 +368,9 @@ class Handover(DeterministicBaseSkill):
     raise NotImplementedError
 
 class JogJoint(BaseDeterministicTimedSkill):
+  """Skill for simple jogging (=moving a single joint in config space) of a joint
+  at a given speed.
+  """
   def __init__(self, speed, idx, duration):
     self.speed = speed
     self.idx = idx
@@ -343,6 +389,8 @@ class JogJoint(BaseDeterministicTimedSkill):
 
     return False
 
+# Scrwing should actually also go down compared to just joint jogging
+# Technically based on sensor/force feedback
 class Screw(DeterministicBaseSkill):
   def __init__(self,speed, ee_name):
     self.speed = speed
@@ -354,8 +402,13 @@ class Screw(DeterministicBaseSkill):
   def done(self, q, env):
     raise NotImplementedError
 
+# It might be more efficient to precompute/rollout a distribution compared to rolling it out
+# in the planning loop.
 class PrecomputedSkillDistribution(StochasticBaseSkill):
-  def __init__():
+  """Stoachstic skill with precomputed end-distributions/precomputed trajectory distributions.
+  Enables not requiring a learned/scripted function for the rollout.
+  """
+  def __init__(self):
     pass
 
   def step(self, q, env, dt=0.1):

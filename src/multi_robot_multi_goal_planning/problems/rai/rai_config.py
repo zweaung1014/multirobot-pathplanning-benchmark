@@ -4092,7 +4092,7 @@ def make_handover_env(view: bool = False):
     return C, keyframes
 
 
-def make_bimanual_grasping_env(obstacle, view: bool = False):
+def make_bimanual_grasping_env(obstacle, rotate=True, view: bool = False):
     C = ry.Config()
 
     C.addFrame("floor").setPosition([0, 0, 0.0]).setShape(
@@ -4138,11 +4138,18 @@ def make_bimanual_grasping_env(obstacle, view: bool = False):
             [0, -0.4, 0.25]
         ).setJoint(ry.JT.rigid)
 
-    C.addFrame("goal1").setParent(table).setShape(
-        ry.ST.box, size=[0.2, 0.4, 0.2, 0.005]
-    ).setColor([1, 0.5, 0, 0.2]).setContact(0).setRelativePosition(
-        [-0., 0., 0.15]
-    ).setJoint(ry.JT.rigid).setRelativeQuaternion([0.7071, 0, 0, -0.7071])
+    if rotate:
+        C.addFrame("goal1").setParent(table).setShape(
+            ry.ST.box, size=[0.2, 0.4, 0.2, 0.005]
+        ).setColor([1, 0.5, 0, 0.2]).setContact(0).setRelativePosition(
+            [-0., 0., 0.15]
+        ).setJoint(ry.JT.rigid).setRelativeQuaternion([0.7071, 0, 0, -0.7071])
+    else:
+        C.addFrame("goal1").setParent(table).setShape(
+            ry.ST.box, size=[0.2, 0.4, 0.2, 0.005]
+        ).setColor([1, 0.5, 0, 0.2]).setContact(0).setRelativePosition(
+            [-0., 0., 0.15]
+        ).setJoint(ry.JT.rigid)
 
     C.addFrame("obj_marker").setParent(
         C.getFrame("obj1")
@@ -8534,3 +8541,4 @@ def make_multi_agent_pick_and_place(view: bool = False):
 
 def make_multi_agent_skill_welding_env(num_robots=4, num_pts=4, view: bool = False):
     pass
+
