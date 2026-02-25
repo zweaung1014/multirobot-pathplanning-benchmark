@@ -331,8 +331,10 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
     return q_new
 
   def done(self, t, q, env):
-    # TODO: implement -> deal with time
-    raise NotImplementedError
+    if t > 1.0:
+      return True
+
+    return False
 
 class Insertion(StochasticBaseSkill):
   def __init__(self):
