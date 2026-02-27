@@ -528,7 +528,9 @@ class rai_dual_arm_transport(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 # TODO unfinished
 # pick 'any' item from a bin

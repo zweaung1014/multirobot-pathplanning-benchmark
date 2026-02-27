@@ -1985,14 +1985,11 @@ class PrioritizedPlanner(BasePlanner):
         skill = task.skill
         conf_type = type(env.get_start_pos()) 
 
-        # Collect skill joints of involved robots so skills get correct subset
+        # Collect joints of involved robots (q_subset for skills)
         skill.joints = []
         for r in involved_robots:
             skill.joints.extend(env.robot_joints[r])
-
-        # COncatenates only involved robots DOFs
-        # TODO (Liam) really necessary? (start_pose only contains involved_robot poses)
-        q_init = conf_type.from_list(start_pose).state()
+        q_init = conf_type.from_list(start_pose).state() # Only involved robots
     
         result = skill.rollout(q_init, env, t0)
         traj, times = result.trajectory, result.times # Single flat arrays
@@ -2002,7 +1999,7 @@ class PrioritizedPlanner(BasePlanner):
         #     logger.warning("skill did not reach its goal")
         #     return None, None
 
-        # Collision check
+        # Split back into per-robot sub-trajectories
         for k in range(len(times)-1):
             parts_s, parts_e = [], []
             offset = 0
@@ -2014,6 +2011,7 @@ class PrioritizedPlanner(BasePlanner):
             qs_conf = conf_type.from_list(parts_s)
             qe_conf = conf_type.from_list(parts_e)
             
+            # Collision check
             if not edge_collision_free_with_moving_obs(
                 env,
                 qs_conf, # NpConfiguration objects 
@@ -2337,7 +2335,7 @@ class PrioritizedPlanner(BasePlanner):
                 path = []
 
                 T = robot_paths.get_final_time() # Total makespan of the plan
-                N = 5 * int(np.ceil(T)) # Sample plan at N evenly spaced time points(uniform)
+                N = 5 * int(np.ceil(T)) # Sample plan at N evenly spaced time points (uniform)
 
                 # At each sample time, query configs and current modes from robot_paths
                 for i in range(N):

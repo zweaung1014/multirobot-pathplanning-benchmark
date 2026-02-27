@@ -257,8 +257,8 @@ def main():
         path = path_w_doubled_modes
 
     if args.interpolate:
-        # path = interpolate_path(path, 0.1) # TODO Resolution: run_planner (live) has 0.05, display_single_path (replay) has 0.1 
-        path = interpolate_path(path, 0.05) 
+        path = interpolate_path(path, 0.1) # TODO Resolution: run_planner (live) has 0.05, display_single_path (replay) has 0.1 
+        #path = interpolate_path(path, 0.05) 
         
     if args.shortcut:
         plt.figure()

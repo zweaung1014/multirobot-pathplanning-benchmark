@@ -4229,36 +4229,36 @@ def make_bimanual_grasping_env(obstacle, rotate=True, view: bool = False):
     # )
     komo.addObjective(
         [1, 2],
-        ry.FS.scalarProductXZ,
+        ry.FS.scalarProductXX,
         ["a1_" + "ur_ee_marker", box],
-        ry.OT.eq,
-        [1e1],
-        [-1]
-    )
-    komo.addObjective(
-        [1, 2],
-        ry.FS.scalarProductXZ,
-        ["a2_" + "ur_ee_marker", box],
-        ry.OT.eq,
-        [1e1],
-        [-1]
-    )
-
-    komo.addObjective(
-        [1, 2],
-        ry.FS.scalarProductXZ,
-        [box, "a1_" + "ur_ee_marker"],
         ry.OT.eq,
         [1e1],
         [1]
     )
     komo.addObjective(
         [1, 2],
-        ry.FS.scalarProductYX,
+        ry.FS.scalarProductZZ,
+        ["a1_" + "ur_ee_marker", box],
+        ry.OT.eq,
+        [1e1],
+        [1]
+    )
+
+    komo.addObjective(
+        [1, 2],
+        ry.FS.scalarProductXX,
         ["a2_" + "ur_ee_marker", box],
         ry.OT.eq,
         [1e1],
         [-1]
+    )
+    komo.addObjective(
+        [1, 2],
+        ry.FS.scalarProductZZ,
+        ["a2_" + "ur_ee_marker", box],
+        ry.OT.eq,
+        [1e1],
+        [1]
     )
 
     # komo.addObjective(
@@ -8031,7 +8031,7 @@ def make_single_agent_drawing(view: bool = False):
 
     C.addFrame("a1_stick").setParent(C.getFrame("a1_ur_vacuum")).setShape(
         ry.ST.cylinder, size=[0.3, 0.02]
-    ).setColor([0.1, 0.1, 0.1]).setRelativeQuaternion([0.707, 0, 0.707, 0]).setRelativePosition([0.2, 0, 0.]).setContact(-1)
+    ).setColor([0.1, 0.1, 0.1]).setRelativeQuaternion([0.707, 0, 0.707, 0]).setRelativePosition([0.14, 0, 0.]).setContact(-1)
 
     C.addFrame("a1_stick_ee").setParent(C.getFrame("a1_stick")).setShape(
         ry.ST.sphere, size=[0.02]

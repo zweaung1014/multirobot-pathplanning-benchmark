@@ -297,12 +297,14 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
     self.obj_start_pose = obj_start_pose
     self.obj_end_pose = obj_end_pose
     
+    self.duration = 1
+
     self.ee_names = ee_names
 
     # we assume that ee_pose + transformation == obj_pose
     self.transformation = transformations
 
-    self.num_ik_iters = 2
+    self.max_num_ik_iters = 10
 
     self.key_rots = R.from_quat([self.obj_start_pose[3:], self.obj_end_pose[3:]], scalar_first=True)
     self.slerp = Slerp([0,1], self.key_rots)
@@ -317,24 +319,23 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
     return np.concatenate([p_new, q])
 
   def step(self, t, q, env, dt=0.1):
-    env.C.setJointState(q)
-
-    # get desired position of obj at time
+    env.C.setJointState(q, self.joints)
     desired_pose = self._get_desired_obj_pose_at_time(t)
-    
-    q_new = q
+    q_new = q.copy()
 
     # This implementation is somewhat inefficient/computationally expensive as is
     for i in range(len(self.ee_names)):
       desired_ee_pose = compute_end_effector_pose(desired_pose, self.transformation[i])
-      for j in range(self.num_ik_iters):
-        env.C.setJointState(q_new)
+      
+      for j in range(self.max_num_ik_iters):
+        env.C.setJointState(q_new, self.joints)
         [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_names[i]], 1, desired_ee_pose)
-        
-        q_dot = np.linalg.pinv(jac) @ err
 
-        # integrate to get next pos
-        q_new = q_new - dt * q_dot
+        if np.linalg.norm(err) < 1e-3:
+          break
+
+        q_dot = np.linalg.pinv(jac) @ err
+        q_new = q_new - 1.0 * q_dot # dt for rollout (traj discretization), not IK convergence
     
     return q_new
 
