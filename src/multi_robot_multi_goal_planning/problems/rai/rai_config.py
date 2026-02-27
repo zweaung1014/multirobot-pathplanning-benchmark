@@ -8873,7 +8873,7 @@ def make_single_agent_bin_packing_env(view: bool = False):
         [0.0, -0.22, 0.12]
     ).setJoint(ry.JT.rigid)
 
-    C.view(True)
+    # C.view(True)
 
     def compute_poses(C, robot_prefix, box, goal):
         # set everything but the current box to non-contact
@@ -8897,7 +8897,7 @@ def make_single_agent_bin_packing_env(view: bool = False):
         # komo.addControlObjective([], 1, 1e-1)
         # komo.addControlObjective([], 2, 1e-1)
 
-        pre_grasp_offset = 0.4
+        pre_grasp_offset = 0.5
 
         ee_name = "ee_marker"
 

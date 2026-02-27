@@ -31,12 +31,18 @@ def visualize_modes(env: rai_env, export_images: bool = False):
         else:
             task = env.get_active_task(m, None)
         switching_robots = task.robots
-        goal_sample = task.goal.sample(m)
 
         if task.name is not None:
             print("Active Task name:", task.name)
         print("Involved robots: ", task.robots)
 
+        if task.is_skill:
+            task.skill.joints = env.robot_joints[task.robots[0]]
+            skill_result = task.skill.rollout(env.C.getJointState(), env, 0)
+            goal_sample = skill_result.trajectory[-1]
+        else:
+            goal_sample = task.goal.sample(m)
+    
         print("Goal state:")
         print(goal_sample)
 

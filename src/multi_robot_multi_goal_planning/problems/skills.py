@@ -136,7 +136,7 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
     
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
-    q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
+    # q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
 
     # integrate to get next pos
     q_new = q - dt * q_dot
@@ -166,7 +166,7 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
     
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
-    q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
+    # q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
 
     # integrate to get next pos
     q_new = q - dt * q_dot
