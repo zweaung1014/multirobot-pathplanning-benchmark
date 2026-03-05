@@ -8796,11 +8796,41 @@ def make_single_agent_bin_packing_env(view: bool = False):
 
     C.addFile(robot_path, namePrefix="a1_").setParent(
         C.getFrame("table")
-    ).setRelativePosition([-0., 0.5, 0]).setRelativeQuaternion(
+    ).setRelativePosition([-0., 0.6, 0]).setRelativeQuaternion(
         [0.7071, 0, 0, -0.7071]
     ).setJoint(ry.JT.rigid)
 
     # add obj
+
+    bin_floor = C.addFrame("bin_floor").setParent(table).setShape(
+        ry.ST.box, size=[0.4, 0.4, 0.03]
+    ).setContact(1).setRelativePosition(
+        [0.0, -0.0, 0.05]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_l").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.03, 0.4, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [-0.23, 0., 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_r").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.03, 0.4, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [0.23, 0., 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_t").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.37, 0.03, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [0.0, 0.23, 0.12]
+    ).setJoint(ry.JT.rigid)
+
+    C.addFrame("bin_wall_b").setParent(C.getFrame("bin_floor")).setShape(
+        ry.ST.box, size=[0.37, 0.03, 0.2, 0.005]
+    ).setContact(1).setRelativePosition(
+        [0.0, -0.23, 0.12]
+    ).setJoint(ry.JT.rigid)
 
     C.addFrame("obj1").setParent(table).setShape(
         ry.ST.box, [0.27, 0.1, 0.1, 0.5]
@@ -8815,7 +8845,7 @@ def make_single_agent_bin_packing_env(view: bool = False):
     ).setColor([0, 1, 0]).setContact(1).setJoint(ry.JT.rigid)
 
     C.addFrame("obj3").setParent(table).setShape(
-        ry.ST.box, [0.27, 0.27, 0.2, 0.5]
+        ry.ST.box, [0.27, 0.27, 0.15, 0.5]
     ).setRelativePosition([0.5, 0.2, 0.15]).setMass(
         0.1
     ).setColor([0, 1, 1]).setContact(1).setJoint(ry.JT.rigid)
@@ -8826,21 +8856,21 @@ def make_single_agent_bin_packing_env(view: bool = False):
     #     0.1
     # ).setColor([1, 1, 0]).setContact(1).setJoint(ry.JT.rigid)
 
-    C.addFrame("goal1").setParent(table).setShape(
+    C.addFrame("goal1").setParent(bin_floor).setShape(
         ry.ST.marker, [0.1, 0.005]
-    ).setRelativePosition([0.2-0.27/2, 0.2-0.1/2, 0.15]).setContact(
+    ).setRelativePosition([0.2-0.27/2, 0.2-0.1/2, 0.05]).setContact(
         0
     ).setJoint(ry.JT.rigid)
 
-    C.addFrame("goal2").setParent(table).setShape(
+    C.addFrame("goal2").setParent(bin_floor).setShape(
         ry.ST.marker, [0.1, 0.005]
-    ).setRelativePosition([-0.2+0.1/2., 0.2-0.2/2, 0.15]).setContact(
+    ).setRelativePosition([-0.2+0.1/2., 0.2-0.2/2, 0.07]).setContact(
         0
     ).setJoint(ry.JT.rigid)
 
-    C.addFrame("goal3").setParent(table).setShape(
+    C.addFrame("goal3").setParent(bin_floor).setShape(
         ry.ST.marker, [0.1, 0.005]
-    ).setRelativePosition([0.2-0.27/2, -0.2+0.27/2, 0.2]).setContact(
+    ).setRelativePosition([0.2-0.27/2, -0.2+0.27/2, 0.1]).setContact(
         0
     ).setJoint(ry.JT.rigid)
 
@@ -8849,36 +8879,6 @@ def make_single_agent_bin_packing_env(view: bool = False):
     # ).setRelativePosition([-0.5, 0., 0.1]).setContact(
     #     0
     # ).setJoint(ry.JT.rigid)
-
-    C.addFrame("bin_floor").setParent(table).setShape(
-        ry.ST.box, size=[0.4, 0.4, 0.03]
-    ).setContact(1).setRelativePosition(
-        [0.0, -0.0, 0.05]
-    ).setJoint(ry.JT.rigid)
-
-    C.addFrame("bin_wall_l").setParent(C.getFrame("bin_floor")).setShape(
-        ry.ST.box, size=[0.03, 0.4, 0.2, 0.005]
-    ).setContact(1).setRelativePosition(
-        [-0.22, 0., 0.12]
-    ).setJoint(ry.JT.rigid)
-
-    C.addFrame("bin_wall_r").setParent(C.getFrame("bin_floor")).setShape(
-        ry.ST.box, size=[0.03, 0.4, 0.2, 0.005]
-    ).setContact(1).setRelativePosition(
-        [0.22, 0., 0.12]
-    ).setJoint(ry.JT.rigid)
-
-    C.addFrame("bin_wall_t").setParent(C.getFrame("bin_floor")).setShape(
-        ry.ST.box, size=[0.37, 0.03, 0.2, 0.005]
-    ).setContact(1).setRelativePosition(
-        [0.0, 0.22, 0.12]
-    ).setJoint(ry.JT.rigid)
-
-    C.addFrame("bin_wall_b").setParent(C.getFrame("bin_floor")).setShape(
-        ry.ST.box, size=[0.37, 0.03, 0.2, 0.005]
-    ).setContact(1).setRelativePosition(
-        [0.0, -0.22, 0.12]
-    ).setJoint(ry.JT.rigid)
 
     # C.view(True)
 
@@ -9012,14 +9012,14 @@ def make_multi_agent_bin_packing_env(view: bool = False):
 
     C.addFile(robot_path, namePrefix="a1_").setParent(
         C.getFrame("table")
-    ).setRelativePosition([-0., 0.5, 0]).setRelativeQuaternion(
+    ).setRelativePosition([-0., 0.6, 0]).setRelativeQuaternion(
         [0.7071, 0, 0, -0.7071]
     ).setJoint(ry.JT.rigid)
 
 
     C.addFile(robot_path, namePrefix="a2_").setParent(
         C.getFrame("table")
-    ).setRelativePosition([-0., -0.5, 0]).setRelativeQuaternion(
+    ).setRelativePosition([-0., -0.6, 0]).setRelativeQuaternion(
         [0.7071, 0, 0, 0.7071]
     ).setJoint(ry.JT.rigid)
 
@@ -9038,7 +9038,7 @@ def make_multi_agent_bin_packing_env(view: bool = False):
     ).setColor([0, 1, 0]).setContact(1).setJoint(ry.JT.rigid)
 
     C.addFrame("obj3").setParent(table).setShape(
-        ry.ST.box, [0.27, 0.27, 0.2, 0.5]
+        ry.ST.box, [0.27, 0.27, 0.15, 0.5]
     ).setRelativePosition([0.5, 0.2, 0.15]).setMass(
         0.1
     ).setColor([0, 1, 1]).setContact(1).setJoint(ry.JT.rigid)
@@ -9103,7 +9103,7 @@ def make_multi_agent_bin_packing_env(view: bool = False):
         [0.0, -0.22, 0.12]
     ).setJoint(ry.JT.rigid)
 
-    C.view(True)
+    # C.view(True)
 
     def compute_poses(C, robot_prefix, box, goal):
         # set everything but the current box to non-contact

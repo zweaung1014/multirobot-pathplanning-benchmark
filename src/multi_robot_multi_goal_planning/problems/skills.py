@@ -159,25 +159,44 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
     self.goal_pose = goal
     self.ee_name = ee_name
 
-    self.qdot_clip = 0.2
-
   def step(self, q, env, dt=0.1):
     # get jacobian
     env.C.setJointState(q, self.joints)
-    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
+
+    ee_pose = env.C.getFrame(self.ee_name).getPose()
+
+    mod_goal_pose = self.goal_pose * 1.
+    if np.dot(ee_pose[3:], self.goal_pose[3:]) < 0:
+      mod_goal_pose[3:] = -mod_goal_pose[3:]
+
+    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, mod_goal_pose)
 
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
-    # q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
 
     # integrate to get next pos
     q_new = q - dt * q_dot
+
+    # print(env.C.getFrame(self.ee_name).getPose())
+    # print(self.goal_pose)
+
+    # print(err)
+
+    # env.C.setJointState(q_new, self.joints)
+    # env.C.view(True)
+
     return q_new
 
   def done(self, q, env):
     # get jacobian
     env.C.setJointState(q, self.joints)
-    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
+
+    ee_pose = env.C.getFrame(self.ee_name).getPose()
+    mod_goal_pose = self.goal_pose * 1.
+    if np.dot(ee_pose[3:], self.goal_pose[3:]) < 0:
+      mod_goal_pose[3:] = -mod_goal_pose[3:]
+
+    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, mod_goal_pose)
 
     if np.linalg.norm(err) < 1e-3:
       return True
@@ -343,6 +362,65 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
 
   def done(self, t, q, env):
     if t > 1.0:
+      return True
+
+    return False
+
+# basically the same thing as pose reaching, but with obstacle avoidance
+class ModelBasedInsertion(DeterministicBaseSkill):
+  def __init__(self, goal, ee_name):
+    self.goal_pose = goal
+    self.ee_name = ee_name
+
+    self.qdot_clip = 0.2
+
+  def step(self, q, env, dt=0.1):
+    # get jacobian
+    env.C.setJointState(q, self.joints)
+
+    ee_pose = env.C.getFrame(self.ee_name).getPose()
+
+    mod_goal_pose = self.goal_pose * 1.
+    if np.dot(ee_pose[3:], self.goal_pose[3:]) < 0:
+      mod_goal_pose[3:] = -mod_goal_pose[3:]
+
+    [pose_err, pose_jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, mod_goal_pose)
+
+    # compute pid law
+    pose_q_dot = np.linalg.pinv(pose_jac) @ pose_err
+
+    # integrate to get next pos
+    q_new = q - dt * pose_q_dot
+
+    # correct position such that we are not in collision
+    for _ in range(100):
+      env.C.setJointState(q_new, self.joints)
+      env.C.computeCollisions()
+      [coll_err, coll_jac] = env.C.eval(robotic.FS.accumulatedCollisions, [])
+
+      if np.linalg.norm(coll_err) < 1e-6:
+        break
+  
+      coll_q_dot = np.linalg.pinv(coll_jac) @ coll_err
+      q_new = q_new - coll_q_dot
+
+    # env.C.setJointState(q_new, self.joints)
+    # env.C.view(True)
+
+    return q_new
+
+  def done(self, q, env):
+    # get jacobian
+    env.C.setJointState(q, self.joints)
+    
+    ee_pose = env.C.getFrame(self.ee_name).getPose()
+    mod_goal_pose = self.goal_pose * 1.
+    if np.dot(ee_pose[3:], self.goal_pose[3:]) < 0:
+      mod_goal_pose[3:] = -mod_goal_pose[3:]
+
+    [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, mod_goal_pose)
+
+    if np.linalg.norm(err) < 1e-3:
       return True
 
     return False

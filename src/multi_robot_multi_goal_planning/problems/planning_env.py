@@ -1382,7 +1382,7 @@ class DependencyGraphMixin(BaseModeLogic):
 
                     if task.goal.satisfies_constraints(
                         q_concat, mode=mode, tolerance=1e-8
-                    ) or (task.is_skill and task.skill.done(q.state(), self)):
+                    ) or (task.is_skill and task.skill.done(q_concat, self)):
                         tmp = Mode(task_list=next_mode.copy(), entry_configuration=q)
                         tmp.prev_mode = mode
 
