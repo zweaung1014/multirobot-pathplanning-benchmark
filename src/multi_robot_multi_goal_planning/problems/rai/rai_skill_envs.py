@@ -743,7 +743,7 @@ class rai_multi_agent_bin_picking(SequenceMixin, rai_env):
             [a1_pre_pick, a1_pre_place_type_1, a1_pre_place_type_2], \
             [a2_pre_pick, a2_pre_place_type_1, a2_pre_place_type_2] = \
             rai_config.make_multi_agent_bin_picking()
-        self.C.view(True)
+        # self.C.view(True)
 
         self.robots = ["a1", "a2"]
 
@@ -814,6 +814,201 @@ class rai_multi_agent_bin_picking(SequenceMixin, rai_env):
 
         task_name_sequence = []
         for i in range(1,5):
+            task_name_sequence.extend(
+                [f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"]
+            )
+
+        self.sequence = self._make_sequence_from_names(
+            task_name_sequence +  ["terminal"]
+        )
+
+        self.collision_tolerance = 0.001
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
+# TODO: MERGE WITH ABOVE
+@register("rai.dep_multi_agent_bin_picking")
+class rai_multi_agent_bin_picking(DependencyGraphMixin, rai_env):
+    def __init__(self):
+        self.C, \
+            [a1_pre_pick, a1_pre_place_type_1, a1_pre_place_type_2], \
+            [a2_pre_pick, a2_pre_place_type_1, a2_pre_place_type_2] = \
+            rai_config.make_multi_agent_bin_picking()
+        # self.C.view(True)
+
+        self.robots = ["a1", "a2"]
+
+        rai_env.__init__(self)
+
+        self.manipulating_env = True
+
+        home_pose = self.C.getJointState()
+
+        # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
+        # above the bin for picking
+        
+        self.tasks = []
+
+        self.C.setJointState(a1_pre_pick, self.robot_joints["a1"])
+        pose = self.C.getFrame("a1_ur_gripper_center").getPose()
+        self.C.setJointState(home_pose)
+
+        for i in range(1,5):
+            if i%2 == 1:
+                pre_pick = a1_pre_pick
+                place_pose = a1_pre_place_type_1
+                robot = "a1"
+
+            else:
+                pre_pick = a2_pre_pick
+                place_pose = a2_pre_place_type_2
+                robot = "a2"
+    
+            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
+            grasp_pose[3:] = pose[3:]
+
+            self.tasks.extend([
+                Task(
+                    f"pre_pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick),
+                ),
+                Task(
+                    f"pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick),
+                    frames=[f"{robot}_ur_gripper_center", f"obj{i}"],
+                    type="pick",
+                    skill = EEPoseGoalReaching(grasp_pose, f"{robot}_ur_gripper_center")
+                ),
+                Task(
+                    f"pre_place_{i}",
+                    [robot],
+                    SingleGoal(place_pose),
+                ),
+                Task(
+                    f"place_{i}",
+                    [robot],
+                    SingleGoal(place_pose),
+                    skill = EEPoseGoalReaching(self.C.getFrame(f"goal{i}").getPose(), f"obj{i}"),
+                    type="place",
+                    frames=["table", f"obj{i}"]
+                )
+            ])
+
+        self.tasks.append(
+            Task(
+                "terminal",
+                ["a1", "a2"],
+                SingleGoal(home_pose),
+            ))
+
+        self.graph = DependencyGraph()
+
+        for i in range(1,5):
+            self.graph.add_dependency(f"pick_{i}", f"pre_pick_{i}")
+            self.graph.add_dependency(f"pre_place_{i}", f"pick_{i}")
+            self.graph.add_dependency(f"place_{i}", f"pre_place_{i}")
+
+        self.graph.add_dependency("pre_pick_3", "place_1")
+        self.graph.add_dependency("pre_pick_4", "place_2")
+
+        self.graph.add_dependency("terminal", "place_3")
+        self.graph.add_dependency("terminal", "place_4")        
+
+        self.collision_tolerance = 0.001
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.prev_mode = self.start_mode
+
+        self.spec.dependency = DependencyType.UNORDERED
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
+@register("rai.multi_agent_bin_packing")
+class rai_multi_agent_bin_packing(SequenceMixin, rai_env):
+    def __init__(self):
+        self.C, [pre_pick_type_1, pre_pick_type_2, pre_place] = rai_config.make_multi_agent_bin_packing_env()
+        self.C.view(True)
+
+        self.robots = ["a1", "a2"]
+
+        rai_env.__init__(self)
+
+        self.manipulating_env = True
+
+        home_pose = self.C.getJointState()
+
+        # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
+        # above the bin for picking
+        
+        self.tasks = []
+
+        self.C.setJointState(pre_place)
+        pose = self.C.getFrame("a1_ur_ee_marker").getPose()
+        self.C.setJointState(home_pose)
+
+        ee_name = "ee_marker"
+
+        for i in range(1,4):
+            if i in [1,2]:
+                pre_pick = pre_pick_type_1
+            else:
+                pre_pick = pre_pick_type_2
+            
+            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.15, 0, 0, 0, 0])
+            grasp_pose[3:] = 1.*pose[3:]
+
+            self.tasks.extend([
+                Task(
+                    f"pre_pick_{i}",
+                    ["a1"],
+                    SingleGoal(pre_pick),
+                ),
+                Task(
+                    f"pick_{i}",
+                    ["a1"],
+                    SingleGoal(pre_pick),
+                    frames=["a1_ur_" + ee_name, f"obj{i}"],
+                    type="pick",
+                    skill = EEPoseGoalReaching(grasp_pose, "a1_ur_" + ee_name)
+                ),
+                Task(
+                    f"pre_place_{i}",
+                    ["a1"],
+                    SingleGoal(pre_place),
+                ),
+                Task(
+                    f"place_{i}",
+                    ["a1"],
+                    SingleGoal(pre_place),
+                    skill = EEPoseGoalReaching(self.C.getFrame(f"goal{i}").getPose(), f"obj{i}"),
+                    type="place",
+                    frames=["table", f"obj{i}"]
+                )
+            ])
+
+        self.tasks.append(
+            Task(
+                "terminal",
+                ["a1"],
+                SingleGoal(home_pose),
+            ))
+
+        task_name_sequence = []
+        for i in range(1,4):
             task_name_sequence.extend(
                 [f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"]
             )
