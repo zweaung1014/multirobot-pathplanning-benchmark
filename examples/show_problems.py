@@ -37,9 +37,19 @@ def visualize_modes(env: rai_env, export_images: bool = False):
         print("Involved robots: ", task.robots)
 
         if task.is_skill:
-            task.skill.joints = env.robot_joints[task.robots[0]]
-            skill_result = task.skill.rollout(env.C.getJointState(), env, 0)
-            goal_sample = skill_result.trajectory[-1][env.robot_idx[task.robots[0]]]
+            task.skill.joints = []
+            for r in task.robots:
+                task.skill.joints.extend(env.robot_joints[r])
+            
+            all_joints = []
+            for r in env.robots:
+                all_joints.extend(env.robot_joints[r])
+            
+            env.C.selectJoints(task.skill.joints)
+            skill_result = task.skill.rollout(env.C.getJointState(), task, all_joints, env, 0)
+            env.C.selectJoints(all_joints)
+
+            goal_sample = skill_result.trajectory[-1]
         else:
             goal_sample = task.goal.sample(m)
     

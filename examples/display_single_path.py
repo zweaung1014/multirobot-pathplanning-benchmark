@@ -156,8 +156,8 @@ def main():
         help="Shortcut the path. (default: False)",
     )
     parser.add_argument(
-        "--dont_insert_transition_nodes",
-        action="store_false",
+        "--insert_transition_nodes",
+        action="store_true",
         help="Insert transition nodes at the modes. (default: False)",
     )
     parser.add_argument(
@@ -246,7 +246,7 @@ def main():
         # make_mode_plot(path, env)
         plt.show()
 
-    if args.dont_insert_transition_nodes:
+    if args.insert_transition_nodes:
         path_w_doubled_modes = []
         for i in range(len(path)):
             path_w_doubled_modes.append(path[i])
@@ -257,8 +257,9 @@ def main():
         path = path_w_doubled_modes
 
     if args.interpolate:
-        path = interpolate_path(path, 0.1)
-
+        path = interpolate_path(path, 0.1) # TODO Resolution: run_planner (live) has 0.05, display_single_path (replay) has 0.1 
+        #path = interpolate_path(path, 0.05) 
+        
     if args.shortcut:
         plt.figure()
         for i in range(path[0].q.num_agents()):

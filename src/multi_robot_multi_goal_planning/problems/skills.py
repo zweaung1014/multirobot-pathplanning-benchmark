@@ -13,7 +13,6 @@ from scipy.spatial.transform import Rotation as R, Slerp
 # might also be more interesting planning wise.
 ##########
 
-# TODO (Liam) standardized output
 @dataclass
 class SkillRolloutResult:
   trajectory: np.ndarray
@@ -37,10 +36,11 @@ class DeterministicBaseSkill(ABC):
   def done(self, q, env):
     pass
 
-  def rollout(self, q_init, env, t0, dt=0.1, max_steps=1000):
+  def rollout(self, q_init, task, all_joints, env, t0, dt=0.1, max_steps=1000):
     """
     Rollout deterministic untimed skill till convergence
     """
+    env.C.selectJoints(task.skill.joints) # Restrict to subspace
     q = q_init.copy()
     trajectory = [q]
     times = [t0]
@@ -52,7 +52,8 @@ class DeterministicBaseSkill(ABC):
         
         if self.done(q, env):
             break
-    
+        
+    env.C.selectJoints(all_joints) # Restore full space # TODO check!
     return SkillRolloutResult(
         trajectory=np.array(trajectory),
         times=np.array(times),
@@ -86,10 +87,11 @@ class BaseDeterministicTimedSkill(ABC):
   def done(self, t, q, env):
     pass
   
-  def rollout(self, q_init, env, t0, dt=0.1):
+  def rollout(self, q_init, task, all_joints, env, t0, dt=0.1):
     """
     Rollout deterministic timed skill for fixed duration
     """
+    env.C.selectJoints(task.skill.joints) # Restrict to subspace
     n_steps = max(1, round(self.duration / dt))
     q = q_init.copy()
     trajectory = [q]
@@ -101,9 +103,10 @@ class BaseDeterministicTimedSkill(ABC):
         times.append(times[-1] + dt)
         trajectory.append(q)
         
-        if self.done(t_norm, q, env): # TODO (Liam) uses t_norm not self.duration
+        if self.done(t_norm, q, env):
             break
     
+    env.C.selectJoints(all_joints) # Restore full space # TODO check!
     return SkillRolloutResult(
         trajectory=np.array(trajectory),
         times=np.array(times),
@@ -136,7 +139,6 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
     
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
-    # q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
 
     # integrate to get next pos
     q_new = q - dt * q_dot
@@ -161,9 +163,9 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
   def step(self, q, env, dt=0.1):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
-    
+
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
     # q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
@@ -174,7 +176,7 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
   def done(self, q, env):
     # get jacobian
-    env.C.setJointState(q)
+    env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, self.goal_pose)
 
     if np.linalg.norm(err) < 1e-3:
@@ -212,7 +214,7 @@ class EndEffectorPoseFollowing(BaseDeterministicTimedSkill):
 
     env.C.setJointState(q, self.joints)
     [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_name], 1, desired_next_pos)
-    
+
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
 
@@ -297,12 +299,14 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
     self.obj_start_pose = obj_start_pose
     self.obj_end_pose = obj_end_pose
     
+    self.duration = 1
+
     self.ee_names = ee_names
 
     # we assume that ee_pose + transformation == obj_pose
     self.transformation = transformations
 
-    self.num_ik_iters = 2
+    self.max_num_ik_iters = 10
 
     self.key_rots = R.from_quat([self.obj_start_pose[3:], self.obj_end_pose[3:]], scalar_first=True)
     self.slerp = Slerp([0,1], self.key_rots)
@@ -317,24 +321,23 @@ class DualRobotGrasping(BaseDeterministicTimedSkill):
     return np.concatenate([p_new, q])
 
   def step(self, t, q, env, dt=0.1):
-    env.C.setJointState(q)
-
-    # get desired position of obj at time
+    env.C.setJointState(q, self.joints)
     desired_pose = self._get_desired_obj_pose_at_time(t)
-    
-    q_new = q
+    q_new = q.copy()
 
     # This implementation is somewhat inefficient/computationally expensive as is
     for i in range(len(self.ee_names)):
       desired_ee_pose = compute_end_effector_pose(desired_pose, self.transformation[i])
-      for j in range(self.num_ik_iters):
-        env.C.setJointState(q_new)
+      
+      for j in range(self.max_num_ik_iters):
+        env.C.setJointState(q_new, self.joints)
         [err, jac] = env.C.eval(robotic.FS.pose, [self.ee_names[i]], 1, desired_ee_pose)
-        
-        q_dot = np.linalg.pinv(jac) @ err
 
-        # integrate to get next pos
-        q_new = q_new - dt * q_dot
+        if np.linalg.norm(err) < 1e-3:
+          break
+
+        q_dot = np.linalg.pinv(jac) @ err
+        q_new = q_new - 1.0 * q_dot # dt for rollout (traj discretization), not IK convergence
     
     return q_new
 

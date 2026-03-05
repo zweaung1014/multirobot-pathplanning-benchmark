@@ -841,12 +841,12 @@ class rai_env(BaseProblem):
                 os.makedirs("./z.vid", exist_ok=True)
                 self.C.view_savePng("./z.vid/")
 
-            dt = pause_time
-            if adapt_to_max_distance:
+            dt = pause_time # Fixed dt
+            if adapt_to_max_distance: # Or adaptive dt
                 if i < len(path) - 1:
-                    v = 5
-                    diff = config_dist(path[i].q, path[i + 1].q, "max_euclidean")
-                    dt = diff / v
+                    v = 5 # Target visual velocity
+                    diff = config_dist(path[i].q, path[i + 1].q, "max_euclidean") # Max joint displacement
+                    dt = diff / v # Sleep longer between distant points and shorter between close points
                     dt = max(dt, 0.01)
 
             time.sleep(dt)

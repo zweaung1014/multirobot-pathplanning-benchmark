@@ -143,7 +143,7 @@ class rai_single_agent_drawing(SequenceMixin, rai_env):
             Task(
                 "draw",
                 ["a1"],
-                SingleGoal(poses[0]), # TODO: figure out how to do skill goal checking
+                SingleGoal(poses[0]), # TODO: figure out how to do skill goal checking (Valentin)
                 skill = EndEffectorPositionFollowing(*pts, "a1_stick_ee")
             ),
             Task(
@@ -373,7 +373,6 @@ class rai_multi_agent_stacking(SequenceMixin, rai_env):
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
 
-
 # TODO unfinished
 # multi agent rearrangement with skills
 @register("rai.multi_agent_dexterous_stacking")
@@ -433,7 +432,6 @@ class rai_multi_agent_drawing(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
 
 # TODO unfinished
 # four robot, same welding env as before
@@ -544,7 +542,6 @@ class rai_dual_arm_transport(SequenceMixin, rai_env):
         BaseModeLogic.__init__(self)
 
         self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
         self.safe_pose = {}
         for r in self.robots:
             self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
@@ -573,11 +570,19 @@ class rai_single_agent_bin_picking(SequenceMixin, rai_env):
         
         self.tasks = []
 
+        self.C.setJointState(pre_pick, self.robot_joints["a1"])
+        pose = self.C.getFrame("a1_ur_gripper_center").getPose()
+        self.C.setJointState(home_pose)
+
         for i in range(1,5):
             if i%2 == 1:
                 place_pose = pre_place_type_1
             else:
                 place_pose = pre_place_type_2
+
+            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
+            grasp_pose[3:] = pose[3:]
+
             self.tasks.extend([
                 Task(
                     f"pre_pick_{i}",
@@ -590,7 +595,7 @@ class rai_single_agent_bin_picking(SequenceMixin, rai_env):
                     SingleGoal(pre_pick),
                     frames=["a1_ur_gripper_center", f"obj{i}"],
                     type="pick",
-                    skill = EEPositionGoalReaching(self.C.getFrame(f"obj{i}").getPosition() + np.array([0, 0, 0.05]), "a1_ur_gripper_center")
+                    skill = EEPoseGoalReaching(grasp_pose, "a1_ur_gripper_center")
                 ),
                 Task(
                     f"pre_place_{i}",
@@ -731,212 +736,6 @@ class rai_single_agent_bin_packing(SequenceMixin, rai_env):
             self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
 
-# TODO unfinished
-# pick 'any' item from a bin
-# Stochastic skill
-# TODO: can a skill determine which frame will be linked??
-# possible solution: just add the object where the robot ends up
-@register("rai.multi_agent_bin_picking")
-class rai_multi_agent_bin_picking(SequenceMixin, rai_env):
-    def __init__(self):
-        self.C, \
-            [a1_pre_pick, a1_pre_place_type_1, a1_pre_place_type_2], \
-            [a2_pre_pick, a2_pre_place_type_1, a2_pre_place_type_2] = \
-            rai_config.make_multi_agent_bin_picking()
-        # self.C.view(True)
-
-        self.robots = ["a1", "a2"]
-
-        rai_env.__init__(self)
-
-        self.manipulating_env = True
-
-        home_pose = self.C.getJointState()
-
-        # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
-        # above the bin for picking
-        
-        self.tasks = []
-
-        self.C.setJointState(a1_pre_pick, self.robot_joints["a1"])
-        pose = self.C.getFrame("a1_ur_gripper_center").getPose()
-        self.C.setJointState(home_pose)
-
-        for i in range(1,5):
-            if i%2 == 1:
-                pre_pick = a1_pre_pick
-                place_pose = a1_pre_place_type_1
-                robot = "a1"
-
-            else:
-                pre_pick = a2_pre_pick
-                place_pose = a2_pre_place_type_2
-                robot = "a2"
-    
-            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
-            grasp_pose[3:] = pose[3:]
-
-            self.tasks.extend([
-                Task(
-                    f"pre_pick_{i}",
-                    [robot],
-                    SingleGoal(pre_pick),
-                ),
-                Task(
-                    f"pick_{i}",
-                    [robot],
-                    SingleGoal(pre_pick),
-                    frames=[f"{robot}_ur_gripper_center", f"obj{i}"],
-                    type="pick",
-                    skill = EEPoseGoalReaching(grasp_pose, f"{robot}_ur_gripper_center")
-                ),
-                Task(
-                    f"pre_place_{i}",
-                    [robot],
-                    SingleGoal(place_pose),
-                ),
-                Task(
-                    f"place_{i}",
-                    [robot],
-                    SingleGoal(place_pose),
-                    skill = EEPoseGoalReaching(self.C.getFrame(f"goal{i}").getPose(), f"obj{i}"),
-                    type="place",
-                    frames=["table", f"obj{i}"]
-                )
-            ])
-
-        self.tasks.append(
-            Task(
-                "terminal",
-                ["a1", "a2"],
-                SingleGoal(home_pose),
-            ))
-
-        task_name_sequence = []
-        for i in range(1,5):
-            task_name_sequence.extend(
-                [f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"]
-            )
-
-        self.sequence = self._make_sequence_from_names(
-            task_name_sequence +  ["terminal"]
-        )
-
-        self.collision_tolerance = 0.001
-        self.collision_resolution = 0.005
-
-        BaseModeLogic.__init__(self)
-
-        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
-        self.safe_pose = {}
-        for r in self.robots:
-            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
-
-# TODO: MERGE WITH ABOVE
-@register("rai.dep_multi_agent_bin_picking")
-class rai_multi_agent_bin_picking(DependencyGraphMixin, rai_env):
-    def __init__(self):
-        self.C, \
-            [a1_pre_pick, a1_pre_place_type_1, a1_pre_place_type_2], \
-            [a2_pre_pick, a2_pre_place_type_1, a2_pre_place_type_2] = \
-            rai_config.make_multi_agent_bin_picking()
-        # self.C.view(True)
-
-        self.robots = ["a1", "a2"]
-
-        rai_env.__init__(self)
-
-        self.manipulating_env = True
-
-        home_pose = self.C.getJointState()
-
-        # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
-        # above the bin for picking
-        
-        self.tasks = []
-
-        self.C.setJointState(a1_pre_pick, self.robot_joints["a1"])
-        pose = self.C.getFrame("a1_ur_gripper_center").getPose()
-        self.C.setJointState(home_pose)
-
-        for i in range(1,5):
-            if i%2 == 1:
-                pre_pick = a1_pre_pick
-                place_pose = a1_pre_place_type_1
-                robot = "a1"
-
-            else:
-                pre_pick = a2_pre_pick
-                place_pose = a2_pre_place_type_2
-                robot = "a2"
-    
-            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
-            grasp_pose[3:] = pose[3:]
-
-            self.tasks.extend([
-                Task(
-                    f"pre_pick_{i}",
-                    [robot],
-                    SingleGoal(pre_pick),
-                ),
-                Task(
-                    f"pick_{i}",
-                    [robot],
-                    SingleGoal(pre_pick),
-                    frames=[f"{robot}_ur_gripper_center", f"obj{i}"],
-                    type="pick",
-                    skill = EEPoseGoalReaching(grasp_pose, f"{robot}_ur_gripper_center")
-                ),
-                Task(
-                    f"pre_place_{i}",
-                    [robot],
-                    SingleGoal(place_pose),
-                ),
-                Task(
-                    f"place_{i}",
-                    [robot],
-                    SingleGoal(place_pose),
-                    skill = EEPoseGoalReaching(self.C.getFrame(f"goal{i}").getPose(), f"obj{i}"),
-                    type="place",
-                    frames=["table", f"obj{i}"]
-                )
-            ])
-
-        self.tasks.append(
-            Task(
-                "terminal",
-                ["a1", "a2"],
-                SingleGoal(home_pose),
-            ))
-
-        self.graph = DependencyGraph()
-
-        for i in range(1,5):
-            self.graph.add_dependency(f"pick_{i}", f"pre_pick_{i}")
-            self.graph.add_dependency(f"pre_place_{i}", f"pick_{i}")
-            self.graph.add_dependency(f"place_{i}", f"pre_place_{i}")
-
-        self.graph.add_dependency("pre_pick_3", "place_1")
-        self.graph.add_dependency("pre_pick_4", "place_2")
-
-        self.graph.add_dependency("terminal", "place_3")
-        self.graph.add_dependency("terminal", "place_4")        
-
-        self.collision_tolerance = 0.001
-        self.collision_resolution = 0.005
-
-        BaseModeLogic.__init__(self)
-
-        self.prev_mode = self.start_mode
-
-        self.spec.dependency = DependencyType.UNORDERED
-        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
-
-        self.safe_pose = {}
-        for r in self.robots:
-            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
-
 @register("rai.multi_agent_bin_packing")
 class rai_multi_agent_bin_packing(SequenceMixin, rai_env):
     def __init__(self):
@@ -1028,6 +827,225 @@ class rai_multi_agent_bin_packing(SequenceMixin, rai_env):
         for r in self.robots:
             self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
+
+# TODO unfinished
+# pick 'any' item from a bin
+# Stochastic skill
+# TODO: can a skill determine which frame will be linked??
+# possible solution: just add the object where the robot ends up
+@register("rai.multi_agent_bin_picking")
+class rai_multi_agent_bin_picking(SequenceMixin, rai_env):
+    def __init__(self):
+        self.C, \
+            [a1_pre_pick, a1_pre_place_type_1, a1_pre_place_type_2], \
+            [a2_pre_pick, a2_pre_place_type_1, a2_pre_place_type_2] = \
+            rai_config.make_multi_agent_bin_picking()
+        # self.C.view(True)
+
+        self.robots = ["a1", "a2"]
+
+        rai_env.__init__(self)
+
+        self.manipulating_env = True
+
+        home_pose = self.C.getJointState()
+
+        # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
+        # above the bin for picking
+        
+        self.tasks = []
+
+        self.C.setJointState(a1_pre_pick, self.robot_joints["a1"])
+        pose_a1 = self.C.getFrame("a1_ur_gripper_center").getPose()
+        self.C.setJointState(home_pose)
+
+        self.C.setJointState(a2_pre_pick, self.robot_joints["a2"])
+        pose_a2 = self.C.getFrame("a2_ur_gripper_center").getPose()
+        self.C.setJointState(home_pose)
+
+        for i in range(1,5):
+            if i%2 == 1:
+                pre_pick = a1_pre_pick
+                place_pose = a1_pre_place_type_1
+                robot = "a1"
+                pose = pose_a1
+
+            else:
+                pre_pick = a2_pre_pick
+                place_pose = a2_pre_place_type_2
+                robot = "a2"
+                pose = pose_a2
+    
+            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
+            grasp_pose[3:] = pose[3:]
+
+            self.tasks.extend([
+                Task(
+                    f"pre_pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick),
+                ),
+                Task(
+                    f"pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick),
+                    frames=[f"{robot}_ur_gripper_center", f"obj{i}"],
+                    type="pick",
+                    skill = EEPoseGoalReaching(grasp_pose, f"{robot}_ur_gripper_center")
+                ),
+                Task(
+                    f"pre_place_{i}",
+                    [robot],
+                    SingleGoal(place_pose),
+                ),
+                Task(
+                    f"place_{i}",
+                    [robot],
+                    SingleGoal(place_pose),
+                    skill = EEPoseGoalReaching(self.C.getFrame(f"goal{i}").getPose(), f"obj{i}"),
+                    type="place",
+                    frames=["table", f"obj{i}"]
+                )
+            ])
+
+        self.tasks.append(
+            Task(
+                "terminal",
+                ["a1", "a2"],
+                SingleGoal(home_pose),
+            ))
+
+        task_name_sequence = []
+        for i in range(1,5):
+            task_name_sequence.extend(
+                [f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"]
+            )
+
+        self.sequence = self._make_sequence_from_names(
+            task_name_sequence +  ["terminal"]
+        )
+
+        self.collision_tolerance = 0.001
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
+# TODO: MERGE WITH ABOVE
+@register("rai.dep_multi_agent_bin_picking")
+class rai_multi_agent_bin_picking(DependencyGraphMixin, rai_env):
+    def __init__(self):
+        self.C, \
+            [a1_pre_pick, a1_pre_place_type_1, a1_pre_place_type_2], \
+            [a2_pre_pick, a2_pre_place_type_1, a2_pre_place_type_2] = \
+            rai_config.make_multi_agent_bin_picking()
+        # self.C.view(True)
+
+        self.robots = ["a1", "a2"]
+
+        rai_env.__init__(self)
+
+        self.manipulating_env = True
+
+        home_pose = self.C.getJointState()
+
+        # assuming here that we have a place to set down an object, and we only need to go to a 'generic' position
+        # above the bin for picking
+        
+        self.tasks = []
+
+        self.C.setJointState(a1_pre_pick, self.robot_joints["a1"])
+        pose_a1 = self.C.getFrame("a1_ur_gripper_center").getPose()
+        self.C.setJointState(home_pose)
+
+        self.C.setJointState(a2_pre_pick, self.robot_joints["a2"])
+        pose_a2 = self.C.getFrame("a2_ur_gripper_center").getPose()
+        self.C.setJointState(home_pose)
+
+        for i in range(1,5):
+            if i%2 == 1:
+                pre_pick = a1_pre_pick
+                place_pose = a1_pre_place_type_1
+                robot = "a1"
+                pose = pose_a1
+
+            else:
+                pre_pick = a2_pre_pick
+                place_pose = a2_pre_place_type_2
+                robot = "a2"
+                pose = pose_a2
+    
+            grasp_pose = self.C.getFrame(f"obj{i}").getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
+            grasp_pose[3:] = pose[3:]
+
+            self.tasks.extend([
+                Task(
+                    f"pre_pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick),
+                ),
+                Task(
+                    f"pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick),
+                    frames=[f"{robot}_ur_gripper_center", f"obj{i}"],
+                    type="pick",
+                    skill = EEPoseGoalReaching(grasp_pose, f"{robot}_ur_gripper_center")
+                ),
+                Task(
+                    f"pre_place_{i}",
+                    [robot],
+                    SingleGoal(place_pose),
+                ),
+                Task(
+                    f"place_{i}",
+                    [robot],
+                    SingleGoal(place_pose),
+                    skill = EEPoseGoalReaching(self.C.getFrame(f"goal{i}").getPose(), f"obj{i}"),
+                    type="place",
+                    frames=["table", f"obj{i}"]
+                )
+            ])
+
+        self.tasks.append(
+            Task(
+                "terminal",
+                ["a1", "a2"],
+                SingleGoal(home_pose),
+            ))
+
+        self.graph = DependencyGraph()
+
+        for i in range(1,5):
+            self.graph.add_dependency(f"pick_{i}", f"pre_pick_{i}")
+            self.graph.add_dependency(f"pre_place_{i}", f"pick_{i}")
+            self.graph.add_dependency(f"place_{i}", f"pre_place_{i}")
+
+        self.graph.add_dependency("pre_pick_3", "place_1")
+        self.graph.add_dependency("pre_pick_4", "place_2")
+
+        self.graph.add_dependency("terminal", "place_3")
+        self.graph.add_dependency("terminal", "place_4")        
+
+        self.collision_tolerance = 0.001
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.prev_mode = self.start_mode
+
+        self.spec.dependency = DependencyType.UNORDERED
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
 # TODO unfinished
 # skills: 
 # - multiple robots -> fast pcb assembly?
@@ -1059,9 +1077,16 @@ class rai_bimanual_sorting(SequenceMixin, rai_env):
         self.tasks = []
 
         for robot_name, [pre_pick, pre_place], obj_name, goal_name in zip(self.robots, [a1_keyframes, a2_keyframes], ["obj1", "obj2"], ["goal1", "goal2"]):
-            pick_position = self.C.getFrame(obj_name).getPose()
-            place_position = self.C.getFrame(goal_name).getPose()
-            
+            # pick_position = self.C.getFrame(obj_name).getPose()
+            # place_position = self.C.getFrame(goal_name).getPose()
+            # place_position = np.concatenate([goal_pose[:3], downward_quat])
+            # TODO (Liam) or change object definition in rai_config?
+            obj_pose = self.C.getFrame(obj_name).getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
+            goal_pose = self.C.getFrame(goal_name).getPose() + np.array([0, 0, 0.05, 0, 0, 0, 0])
+            downward_quat = [0., 1., 0., 0.]
+            pick_position = np.concatenate([obj_pose[:3], downward_quat])
+            place_position = goal_pose
+
             self.tasks.extend([
                 Task(
                     robot_name + "_pre_pick",
@@ -1074,7 +1099,7 @@ class rai_bimanual_sorting(SequenceMixin, rai_env):
                     SingleGoal(pre_pick),
                     frames=[robot_name + "_ur_gripper_center", obj_name],
                     type="pick",
-                    skill = EEPoseGoalReaching(pick_position, robot_name + "ur_gripper_center")
+                    skill = EEPoseGoalReaching(pick_position, robot_name + "_ur_gripper_center")
                 ),
                 Task(
                     robot_name + "_pre_place",

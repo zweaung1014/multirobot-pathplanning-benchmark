@@ -4229,36 +4229,36 @@ def make_bimanual_grasping_env(obstacle, rotate=True, view: bool = False):
     # )
     komo.addObjective(
         [1, 2],
-        ry.FS.scalarProductXZ,
+        ry.FS.scalarProductXX,
         ["a1_" + "ur_ee_marker", box],
-        ry.OT.eq,
-        [1e1],
-        [-1]
-    )
-    komo.addObjective(
-        [1, 2],
-        ry.FS.scalarProductXZ,
-        ["a2_" + "ur_ee_marker", box],
-        ry.OT.eq,
-        [1e1],
-        [-1]
-    )
-
-    komo.addObjective(
-        [1, 2],
-        ry.FS.scalarProductXZ,
-        [box, "a1_" + "ur_ee_marker"],
         ry.OT.eq,
         [1e1],
         [1]
     )
     komo.addObjective(
         [1, 2],
-        ry.FS.scalarProductYX,
+        ry.FS.scalarProductZZ,
+        ["a1_" + "ur_ee_marker", box],
+        ry.OT.eq,
+        [1e1],
+        [1]
+    )
+
+    komo.addObjective(
+        [1, 2],
+        ry.FS.scalarProductXX,
         ["a2_" + "ur_ee_marker", box],
         ry.OT.eq,
         [1e1],
         [-1]
+    )
+    komo.addObjective(
+        [1, 2],
+        ry.FS.scalarProductZZ,
+        ["a2_" + "ur_ee_marker", box],
+        ry.OT.eq,
+        [1e1],
+        [1]
     )
 
     # komo.addObjective(
@@ -7932,6 +7932,13 @@ def make_ur10_screwing_env(view: bool = False):
         0
     ).setJoint(ry.JT.rigid)
 
+    # TODO (Liam) static obstacle between pick (x=0) and screw goal (x=0.5)
+    C.addFrame("block").setParent(table).setShape(
+        ry.ST.box, [0.06, 0.6, 0.3, 0.005]
+    ).setRelativePosition([0.25, 0., 0.22]).setColor(
+        [0.2, 0.2, 0.8]
+    ).setContact(1).setJoint(ry.JT.rigid)
+
     keyframes = []
 
     # compute keyframe for pick
@@ -8006,10 +8013,10 @@ def make_single_agent_drawing(view: bool = False):
         ry.ST.box, size=[20, 20, 0.02, 0.005]
     ).setColor([0.9, 0.9, 0.9]).setContact(0)
 
-    table = (
+    table = ( # Top surface 0.23
         C.addFrame("table")
-        .setPosition([0, 0, 0.2])
-        .setShape(ry.ST.box, size=[2, 3, 0.06, 0.005])
+        .setPosition([0, 0, 0.2]) # Table center 0.2
+        .setShape(ry.ST.box, size=[2, 3, 0.06, 0.005]) # Half-thickness 0.03
         .setColor([0.6, 0.6, 0.6])
         .setContact(1)
     )
@@ -8024,7 +8031,7 @@ def make_single_agent_drawing(view: bool = False):
 
     C.addFrame("a1_stick").setParent(C.getFrame("a1_ur_vacuum")).setShape(
         ry.ST.cylinder, size=[0.3, 0.02]
-    ).setColor([0.1, 0.1, 0.1]).setRelativeQuaternion([0.707, 0, 0.707, 0]).setRelativePosition([0.2, 0, 0.]).setContact(-1)
+    ).setColor([0.1, 0.1, 0.1]).setRelativeQuaternion([0.707, 0, 0.707, 0]).setRelativePosition([0.14, 0, 0.]).setContact(-1)
 
     C.addFrame("a1_stick_ee").setParent(C.getFrame("a1_stick")).setShape(
         ry.ST.sphere, size=[0.02]
@@ -8295,7 +8302,7 @@ def make_bimanual_sorting(view: bool = False):
 
     # C.view(True)
 
-        # keyframes:
+    # keyframes:
     # draw start location (ee-goal)
     def compute_poses(C, robot_prefix, box, goal):
         # set everything but the current box to non-contact
