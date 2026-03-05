@@ -244,11 +244,6 @@ class MultiRobotPath:
           multi_robot_path.add_path(robot2, escape_path, next_mode=None, is_escape=True)
         """
         logger.debug("adding path to multi-robot-path")
-
-        # TODO (Liam)
-        # Add final_time=0.0 here and in the loop track latest finish time among involved robtos
-        # and not just the final_time of the LAST robot (like it is implemented now..) 
-
         for r in robots:
             # Get robot-path from the original path
             subpath = Path(
@@ -257,11 +252,9 @@ class MultiRobotPath:
             )
             self.paths[r].append(subpath)
 
-            # Not a bug. all the paths always have the same end time if multiple robots are involved.
+            # All the paths always have the same end time if multiple robots are involved
             final_time = path.path[r].time[-1]
-            # final_time = max(final_time, path.path[r].time[-1]) # TODO (Liam)
             logger.debug("max_time of path:", final_time)
-            # logger.debug("max_time of path for %s: %s", r, final_time) # TODO (Liam)
 
         # Constructing the mode-sequence:
         # This is done simply by adding the next mode to the sequence
@@ -658,7 +651,7 @@ def edge_collision_free_with_moving_obs(
             return False # Collision found
 
     # Final sanity check: if generated path doesn't have large discontinuous jumps
-    # TODO: this is an ugly hack and should be done differently (Valentin)
+    # TODO: this is an ugly hack and should be done differently
     if len(robots) > 1:
         for i in range(len(all_poses)-1):
             if config_dist(qs.from_flat(all_poses[i]), qs.from_flat(all_poses[i+1])) > resolution * 2:
@@ -1539,7 +1532,7 @@ def plan_in_time_space_bidirectional(
             n_close_opposite = t_b.get_nearest_neighbor(Node(t_rnd, q_rnd), v_max)
             assert n_close_opposite is not None
 
-            # TODO: should we steer here, instead of attempting to connect? (Valentin)
+            # TODO: should we steer here, instead of attempting to connect?
             # Try to link both trees in one shot might fail. Steer more conservative,
             # but more likely to succeed in cluttered spaces.
 
@@ -1785,8 +1778,7 @@ def shortcut_with_dynamic_obstacles(
         else: # Single robot case 
             tmp_other_paths = other_paths # No need to add anything
 
-        # TODO: what is meant by "partial shortcuts"?
-        # This is wrong for partial shortcuts atm. (Valentin)
+        # TODO: This is wrong for partial shortcuts atm.
         if edge_collision_free_with_moving_obs(
             env,
             q0,
@@ -1941,23 +1933,6 @@ class PrioritizedPlannerConfig:
     shortcut_iters: int = 100 # Per-task optimization (after planning each task)
     multirobot_shortcut_iters: int = 100 # Global optimization (after completing all tasks)
 
-
-# TODO LIST
-# [x] PP: fallback when skill fails? -> return None, None 
-# [x] PP: skill terminal configuration should always enable the mode transition?
-# [x] PP: consistent bookkeeping of the per-robot skill ranges? -> with skill_time_ranges Dict
-# [x] SKill: instead check if current mode contains a skill for a given robot? to avoid having to mark it explicitly before
-# [x] Skill: move rollout functions to the skill classes
-# [x] Skill: add skill.duration attribute to deterministic timed skill class
-# [x] Skill: wrong use of t_norm in done -> checks if t_norm \in [0,1] > self.duration -> dead code, should be t_norm >= 1.0
-# [o] Skill: done() needs to be more generic terminal condition (check if current state is goal state), instead of convergence condition
-# [o] PP: What if we don't have another sequence when breaking to the outer loop?
-# [o] General: add types to arguments in all functions
-# [x] PP: validate single-robot skill integration
-# [o] PP: implement multi-robot skill integration 
-# [o] Skill: consistent definitions 
-# [x] Collision: manage correctly Conifuration (function's arguments)
-# [x] Skill: currently operate on whole configuration to multi-robot settings -> should only operate on subset of configuration space
 class PrioritizedPlanner(BasePlanner):
     def __init__(
         self,
@@ -1967,7 +1942,6 @@ class PrioritizedPlanner(BasePlanner):
         self.env = env
         self.config = config
 
-    # TODO (Liam)
     def _execute_skill_task(
             self, 
             task, 
@@ -1994,17 +1968,10 @@ class PrioritizedPlanner(BasePlanner):
         for r in env.robots:
             all_joints.extend(env.robot_joints[r])
 
-        env.C.selectJoints(task.skill.joints) # Restrict to subspace
-        skill_result = task.skill.rollout(q_init, env, t0)
+        skill_result = task.skill.rollout(q_init, task, all_joints, env, t0)
         traj, times = skill_result.trajectory, skill_result.times # Single flat arrays
-        env.C.selectJoints(all_joints) # Restore full space
-        
-        # Goal check # TODO (Liam) come clear on how to define skill goal checking..
-        # if not task.goal.satisfies_constraints(traj[-1], mode=None, tolerance=1e-3):
-        #     logger.warning("skill did not reach its goal")
-        #     return None, None
 
-        # Split back into per-robot sub-trajectories
+        # Check each consecutive edge for collision 
         for k in range(len(times)-1):
             parts_s, parts_e = [], []
             offset = 0
@@ -2016,7 +1983,6 @@ class PrioritizedPlanner(BasePlanner):
             qs_conf = conf_type.from_list(parts_s)
             qe_conf = conf_type.from_list(parts_e)
             
-            # Collision check
             if not edge_collision_free_with_moving_obs(
                 env,
                 qs_conf, # NpConfiguration objects 
@@ -2182,10 +2148,9 @@ class PrioritizedPlanner(BasePlanner):
                 # Goal specification for this task
                 task_goal = task.goal
 
-                # Step 2: motion planning or skill execution
-                # TODO (Liam) Rollout skill instead of planning
+                # Step 2: motion planning OR skill execution (rollout)
                 if task.skill is not None:
-                    # Execute skill (instead of planning)
+                    # EXECUTE SKILL (instead of planning)
                     logger.info(">> This is a SKILL task")
                     path, final_pose = self._execute_skill_task(
                         task, env, start_pose, t0,
@@ -2278,7 +2243,6 @@ class PrioritizedPlanner(BasePlanner):
                     break
 
                 # Step 5: plan escape path
-                # TODO QUESTION why use robot 0 end time as escape_start_time? 
                 logger.info("planning escape path")
                 escape_start_time = path[involved_robots[0]].time[-1] # End of main task path
                 end_times = robot_paths.get_end_times(involved_robots)

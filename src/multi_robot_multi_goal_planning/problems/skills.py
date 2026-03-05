@@ -13,7 +13,6 @@ from scipy.spatial.transform import Rotation as R, Slerp
 # might also be more interesting planning wise.
 ##########
 
-# TODO (Liam) standardized output
 @dataclass
 class SkillRolloutResult:
   trajectory: np.ndarray
@@ -37,10 +36,11 @@ class DeterministicBaseSkill(ABC):
   def done(self, q, env):
     pass
 
-  def rollout(self, q_init, env, t0, dt=0.1, max_steps=1000):
+  def rollout(self, q_init, task, all_joints, env, t0, dt=0.1, max_steps=1000):
     """
     Rollout deterministic untimed skill till convergence
     """
+    env.C.selectJoints(task.skill.joints) # Restrict to subspace
     q = q_init.copy()
     trajectory = [q]
     times = [t0]
@@ -52,7 +52,8 @@ class DeterministicBaseSkill(ABC):
         
         if self.done(q, env):
             break
-    
+        
+    env.C.selectJoints(all_joints) # Restore full space # TODO check!
     return SkillRolloutResult(
         trajectory=np.array(trajectory),
         times=np.array(times),
@@ -86,10 +87,11 @@ class BaseDeterministicTimedSkill(ABC):
   def done(self, t, q, env):
     pass
   
-  def rollout(self, q_init, env, t0, dt=0.1):
+  def rollout(self, q_init, task, all_joints, env, t0, dt=0.1):
     """
     Rollout deterministic timed skill for fixed duration
     """
+    env.C.selectJoints(task.skill.joints) # Restrict to subspace
     n_steps = max(1, round(self.duration / dt))
     q = q_init.copy()
     trajectory = [q]
@@ -101,9 +103,10 @@ class BaseDeterministicTimedSkill(ABC):
         times.append(times[-1] + dt)
         trajectory.append(q)
         
-        if self.done(t_norm, q, env): # TODO (Liam) uses t_norm not self.duration
+        if self.done(t_norm, q, env):
             break
     
+    env.C.selectJoints(all_joints) # Restore full space # TODO check!
     return SkillRolloutResult(
         trajectory=np.array(trajectory),
         times=np.array(times),
@@ -136,7 +139,6 @@ class EEPositionGoalReaching(DeterministicBaseSkill):
     
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
-    # q_dot = np.clip(q_dot, a_min=-self.qdot_clip*np.ones(q_dot.shape), a_max=self.qdot_clip*np.ones(q_dot.shape))
 
     # integrate to get next pos
     q_new = q - dt * q_dot

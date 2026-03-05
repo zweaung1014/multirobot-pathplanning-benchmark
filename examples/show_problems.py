@@ -46,7 +46,7 @@ def visualize_modes(env: rai_env, export_images: bool = False):
                 all_joints.extend(env.robot_joints[r])
             
             env.C.selectJoints(task.skill.joints)
-            skill_result = task.skill.rollout(env.C.getJointState(), env, 0)
+            skill_result = task.skill.rollout(env.C.getJointState(), task, all_joints, env, 0)
             env.C.selectJoints(all_joints)
 
             goal_sample = skill_result.trajectory[-1]
