@@ -229,7 +229,6 @@ class rai_single_agent_lego(SequenceMixin, rai_env):
         for r in self.robots:
             self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
-
 # TODO: enable mode to only plan for a subset of dofs
 @register("rai.single_agent_pick_and_place")
 class rai_single_agent_pick_and_place(SequenceMixin, rai_env):
@@ -301,7 +300,185 @@ class rai_single_agent_pick_and_place(SequenceMixin, rai_env):
 # TODO unfinished
 @register("rai.single_agent_scripted_insert")
 class rai_single_agent_scripted_insert(SequenceMixin, rai_env):
-  pass
+    def __init__(self):
+        self.C, keyframes = rai_config.make_single_robot_insert()
+
+        self.robots = ["a1"]
+
+        rai_env.__init__(self)
+
+        self.manipulating_env = True
+
+        home_pose = self.C.getJointState()
+
+        self.C.setJointState(keyframes[0][0])
+        a1_pose = self.C.getFrame("a1_ur_ee_marker").getPose()
+        self.C.setJointState(home_pose)
+
+        self.tasks = []
+        seq = []
+
+        for i in range(3):
+            pre_pick = keyframes[i][0]
+            pre_place = keyframes[i][1]
+            
+            obj_name = f"obj{i+1}"
+            goal_name = f"goal{i+1}"
+
+            pick_pose = self.C.getFrame(obj_name).getPose()
+            place_pose = self.C.getFrame(goal_name).getPose()
+
+            pick_pose[3:] = a1_pose[3:]
+            pick_pose[2] += 0.11
+
+            self.tasks.extend([
+                Task(
+                    f"pre_pick_{i}",
+                    ["a1"],
+                    SingleGoal(pre_pick + np.random.rand(6) * 0.1),
+                ),
+                Task(
+                    f"pick_{i}",
+                    ["a1"],
+                    SingleGoal(home_pose),
+                    frames=["a1_ur_ee_marker", f"obj{i+1}"],
+                    type="pick",
+                    skill = EEPoseGoalReaching(pick_pose, "a1_ur_ee_marker")
+                ),
+                Task(
+                    f"pre_place_{i}",
+                    ["a1"],
+                    SingleGoal(pre_place + np.random.rand(6) * 0.1),
+                ),
+                Task(
+                    f"place_{i}",
+                    ["a1"],
+                    SingleGoal(home_pose),
+                    # skill = EEPoseGoalReaching(place_pose, f"obj{i+1}"),
+                    skill = ModelBasedInsertion(place_pose, f"obj{i+1}"),
+                    type="place",
+                    frames=["table", f"obj{i+1}"]
+                )
+            ])
+
+            seq.extend([f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"])
+
+        self.tasks.append(
+            Task(
+                "terminal",
+                ["a1"],
+                SingleGoal(home_pose),
+            ),
+        )
+
+        self.sequence = self._make_sequence_from_names(
+            seq + ["terminal"]
+        )
+
+        self.collision_tolerance = 0.005
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+        
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
+@register("rai.multi_agent_scripted_insert")
+class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
+    def __init__(self):
+        self.C, keyframes = rai_config.make_multi_robot_insert()
+
+        self.robots = ["a1", "a2"]
+
+        rai_env.__init__(self)
+
+        self.manipulating_env = True
+
+        home_pose = self.C.getJointState()
+
+        self.C.setJointState(keyframes[0][1] ,self.robot_joints["a1"])
+        a1_pose = self.C.getFrame("a1_ur_ee_marker").getPose()
+
+        self.C.setJointState(keyframes[1][1] ,self.robot_joints["a2"])
+        a2_pose = self.C.getFrame("a2_ur_ee_marker").getPose()
+        
+        self.C.setJointState(home_pose)
+
+        self.tasks = []
+        seq = []
+
+        for i in range(3):
+            robot = keyframes[i][0]
+            pre_pick = keyframes[i][1]
+            pre_place = keyframes[i][2]
+            
+            obj_name = f"obj{i+1}"
+            goal_name = f"goal{i+1}"
+
+            pick_pose = self.C.getFrame(obj_name).getPose()
+            place_pose = self.C.getFrame(goal_name).getPose()
+
+            pick_pose[3:] = a1_pose[3:]
+            pick_pose[2] += 0.11
+
+            self.tasks.extend([
+                Task(
+                    f"pre_pick_{i}",
+                    [robot],
+                    SingleGoal(pre_pick + np.random.rand(6) * 0.1),
+                ),
+                Task(
+                    f"pick_{i}",
+                    [robot],
+                    SingleGoal(home_pose),
+                    frames=[f"{robot}_ur_ee_marker", f"obj{i+1}"],
+                    type="pick",
+                    skill = EEPoseGoalReaching(pick_pose, f"{robot}_ur_ee_marker")
+                ),
+                Task(
+                    f"pre_place_{i}",
+                    [robot],
+                    SingleGoal(pre_place + np.random.rand(6) * 0.1),
+                ),
+                Task(
+                    f"place_{i}",
+                    [robot],
+                    SingleGoal(home_pose),
+                    # skill = EEPoseGoalReaching(place_pose, f"obj{i+1}"),
+                    skill = ModelBasedInsertion(place_pose, f"obj{i+1}"),
+                    type="place",
+                    frames=["table", f"obj{i+1}"]
+                )
+            ])
+
+            seq.extend([f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"])
+
+        self.tasks.append(
+            Task(
+                "terminal",
+                ["a1", "a2"],
+                SingleGoal(home_pose),
+            ),
+        )
+
+        self.sequence = self._make_sequence_from_names(
+            seq + ["terminal"]
+        )
+
+        self.collision_tolerance = 0.005
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+        
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
 
 # TODO unfinished
 @register("rai.single_agent_learned_insert")
