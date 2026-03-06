@@ -386,8 +386,7 @@ class rai_single_agent_scripted_insert(SequenceMixin, rai_env):
         for r in self.robots:
             self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
 
-@register("rai.multi_agent_scripted_insert")
-class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
+class rai_multi_agent_scripted_insert_base(rai_env):
     def __init__(self):
         self.C, keyframes = rai_config.make_multi_robot_insert()
 
@@ -408,7 +407,6 @@ class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
         self.C.setJointState(home_pose)
 
         self.tasks = []
-        seq = []
 
         for i in range(3):
             robot = keyframes[i][0]
@@ -433,7 +431,7 @@ class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
                 Task(
                     f"pick_{i}",
                     [robot],
-                    SingleGoal(home_pose),
+                    SingleGoal(pre_pick),
                     frames=[f"{robot}_ur_ee_marker", f"obj{i+1}"],
                     type="pick",
                     skill = EEPoseGoalReaching(pick_pose, f"{robot}_ur_ee_marker")
@@ -446,7 +444,7 @@ class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
                 Task(
                     f"place_{i}",
                     [robot],
-                    SingleGoal(home_pose),
+                    SingleGoal(pre_place),
                     # skill = EEPoseGoalReaching(place_pose, f"obj{i+1}"),
                     skill = ModelBasedInsertion(place_pose, f"obj{i+1}"),
                     type="place",
@@ -454,7 +452,9 @@ class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
                 )
             ])
 
-            seq.extend([f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"])
+            # TEMORARY FIX
+            self.tasks[-1].skill.joints = self.robot_joints[robot]
+            self.tasks[-3].skill.joints = self.robot_joints[robot]
 
         self.tasks.append(
             Task(
@@ -464,9 +464,46 @@ class rai_multi_agent_scripted_insert(SequenceMixin, rai_env):
             ),
         )
 
+@register("rai.multi_agent_scripted_insert")
+class rai_multi_agent_scripted_insert(SequenceMixin, rai_multi_agent_scripted_insert_base):
+    def __init__(self):
+        rai_multi_agent_scripted_insert_base.__init__(self)
+
+        seq = []
+        for i in range(3):
+            seq.extend([f"pre_pick_{i}", f"pick_{i}", f"pre_place_{i}", f"place_{i}"])
+
         self.sequence = self._make_sequence_from_names(
             seq + ["terminal"]
         )
+
+        self.collision_tolerance = 0.005
+        self.collision_resolution = 0.005
+
+        BaseModeLogic.__init__(self)
+
+        self.spec.home_pose = SafePoseType.HAS_SAFE_HOME_POSE
+        
+        self.safe_pose = {}
+        for r in self.robots:
+            self.safe_pose[r] = np.array(self.C.getJointState()[self.robot_idx[r]])
+
+@register("rai.dep_multi_agent_scripted_insert")
+class rai_dep_multi_agent_scripted_insert(DependencyGraphMixin, rai_multi_agent_scripted_insert_base):
+    def __init__(self):
+        rai_multi_agent_scripted_insert_base.__init__(self)
+
+        self.graph = DependencyGraph()
+
+        for i in range(3):
+            self.graph.add_dependency(f"pick_{i}", f"pre_pick_{i}")
+            self.graph.add_dependency(f"pre_place_{i}", f"pick_{i}")
+            self.graph.add_dependency(f"place_{i}", f"pre_place_{i}")
+
+        self.graph.add_dependency("pre_pick_2", "place_0")
+
+        self.graph.add_dependency("terminal", "place_1")
+        self.graph.add_dependency("terminal", "place_2")        
 
         self.collision_tolerance = 0.005
         self.collision_resolution = 0.005
