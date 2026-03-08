@@ -36,8 +36,6 @@ class Node:
         "whitelist",
         "blacklist",
         "id",
-        # TODO (Liam) NEW
-        "is_skill_waypoint", 
     ]
 
     # Class attribute
@@ -67,9 +65,6 @@ class Node:
 
         self.id = Node.id_counter
         Node.id_counter += 1
-
-        # TODO (Liam) NEW 
-        self.is_skill_waypoint = False
 
     def __lt__(self, other: "Node") -> bool:
         return self.id < other.id
@@ -390,64 +385,18 @@ class MultimodalGraph:
                     else:
                         self.reverse_transition_nodes[next_mode] = [next_node]
 
-    # TODO (Liam) new
-    def add_skill_path(self, states, valid_next_modes):
-        """
-        Add skill states in the PRM graph.
-        """
-        # raise NotImplementedError
-
-        skill_nodes = []
-        
-        # 1. Protect intermediate nodes and add them to the graph
-        for s in states[:-1]:
-            n = Node(s)
-            n.is_skill_waypoint = True
-            skill_nodes.append(n)
-            
-        self.add_nodes(skill_nodes)
-        
-        # 2. Add the final step as a transition node to the graph
-        last_state = states[-1]
-        self.add_transition_nodes([(last_state.q, last_state.mode, valid_next_modes)])
-        
-        # 3. Protect the newly created transition node
-        trans_node = self.transition_nodes[last_state.mode][-1]
-        trans_node.is_skill_waypoint = True
-
     # @profile # run with kernprof -l examples/run_planner.py [your environment] [your flags]
-    # TODO (Liam) make changes in get_neighbors()
     def get_neighbors(
         self, node: Node, space_extent: Optional[float] = None
     ) -> Tuple[List[Node], NDArray | None]:
         """
         Computes all neighbours to the current mode, either k_nearest, or according to a radius.
-        The parameters k* nd r* scale dynamically based on the number of nodes currently in the graph. 
-        
-        - Search is split into two categories: regular nodes (within same mode) and transition nodes (gateways 
-          to other modes). Finds neighbors in both sets and combines them. 
-        - Uses vectorized approaches (batched distance function) & caching to speed things up. 
-
-        New distinction: # TODO
-        - If the node is part of a skill trajectory, the spacial search should be bypassed so A* is forced to
-          step through the unrolled sequence?? that to ensure the exact skill trajectory is being followed
         """
-        # TODO (Liam) new
-        # 
-        # 
-        # 
-        # 
-        #  
-
-
-        # TODO (Liam) rest unchanged
         key = node.state.mode
-
-        # Distance calculation to regular nodes
         if key in self.nodes:
             node_list = self.nodes[key]
 
-            if key not in self.node_array_cache: #
+            if key not in self.node_array_cache:
                 self.node_array_cache[key] = np.array(
                     [n.state.q.q for n in node_list], dtype=np.float64
                 )
@@ -459,7 +408,6 @@ class MultimodalGraph:
                 node.state.q, self.node_array_cache[key]
             )  # this, and the list copm below are the slowest parts
 
-        # Distance calculation to transition nodes
         if key in self.transition_nodes:
             transition_node_list = self.transition_nodes[key]
 
@@ -483,9 +431,7 @@ class MultimodalGraph:
         best_nodes_arr = np.zeros((0, dim))
         best_transitions_arr = np.zeros((0, dim))
 
-        # Strategy 1: k-nearest neighbours
         if self.use_k_nearest:
-            # Applied to regular nodes
             best_nodes = []
             if key in self.nodes:
                 assert node_list is not None
@@ -497,13 +443,12 @@ class MultimodalGraph:
                 k_normal_nodes = k_star
 
                 k_clip = min(k_normal_nodes, len(node_list))
-                topk = np.argpartition(dists, k_clip - 1)[:k_clip] # Get indices of k-smallest distances
+                topk = np.argpartition(dists, k_clip - 1)[:k_clip]
                 topk = topk[np.argsort(dists[topk])]
 
                 best_nodes = [node_list[i] for i in topk]
                 best_nodes_arr = self.node_array_cache[key][topk, :]
 
-            # Applied to transition nodes
             best_transition_nodes = []
             if key in self.transition_nodes:
                 k_star = (
@@ -530,7 +475,6 @@ class MultimodalGraph:
 
             best_nodes = best_nodes + best_transition_nodes
 
-        # Strategy 2: radius search
         else:
             unit_n_ball_measure = ((np.pi**0.5) ** dim) / math.gamma(dim / 2 + 1)
             informed_measure = 1
@@ -552,9 +496,6 @@ class MultimodalGraph:
                     )
                     ** (1 / dim)
                 )
-
-                if len(node_list) == 1: # TODO (added) log(1)=0 -> r_star=0 -> node will fail to connect
-                    r_star = 1e6
 
                 best_nodes = [node_list[i] for i in np.where(dists < r_star)[0]]
                 best_nodes_arr = self.node_array_cache[key][
@@ -598,10 +539,8 @@ class MultimodalGraph:
 
             best_nodes = best_nodes + best_transition_nodes
 
-        # Stack chosen regular and transition nodes
         arr = np.vstack([best_nodes_arr, best_transitions_arr], dtype=np.float64)
 
-        # SPECIAL CASE: if queried node itself is a transition node, it has explicit neighbors in other modes
         if node.is_transition:
             tmp = np.vstack([n.state.q.state() for n in node.neighbors])
             arr = np.vstack([arr, tmp])
@@ -610,7 +549,6 @@ class MultimodalGraph:
         return best_nodes, arr
 
     # @profile # run with kernprof -l examples/run_planner.py [your environment] [your flags]
-    # TODO (Liam) make changes in search()
     def search(
         self,
         start_node: Node,
@@ -633,11 +571,6 @@ class MultimodalGraph:
             best_cost = np.inf
 
         def h(node):
-            """
-            Calculate the heuristic (estimate of the remaining distance from current node to goal)
-            - Normal: use closest mode-transition node distance
-            - Skill node: use distance to exit node for this skill or cost=0 to trick A* taking skill more likely?? # TODO...
-            """
             # return 0
             if node.id in h_cache:
                 return h_cache[node.id]
@@ -805,7 +738,7 @@ class MultimodalGraph:
                 path.append(parents[n])
                 n = parents[n]
 
-            path.append(n) # TODO (remove) start_node already added in last iteration of while loop
+            path.append(n)
             path = path[::-1]
 
         print("Wasted pops", wasted_pops)

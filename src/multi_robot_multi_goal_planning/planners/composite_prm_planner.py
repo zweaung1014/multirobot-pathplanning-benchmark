@@ -359,7 +359,29 @@ class CompositePRM(BasePlanner):
         # 5. Prints
         dist_moved = np.linalg.norm(composite_traj[0] - composite_traj[-1])
         print(f"[DEBUG ROLLOUT] Mode {mode.id} Rollout | Steps: {len(composite_traj)} | Distance: {dist_moved:.4f}")
-        return True
+        # return True
+    
+        # 5. Check
+        if dist_moved < 1e-3:
+            return False, None
+
+        # 6. Determine valid next modes
+        q_final = self.env.start_pos.from_flat(composite_traj[-1])
+        if self.env.is_terminal_mode(mode):
+            valid_next_modes = []
+        else:
+            next_modes = self.env.get_next_modes(q_final, mode)
+            valid_next_modes = self.mode_validation.get_valid_modes(mode, list(next_modes))
+
+            if not valid_next_modes:
+                return False, None 
+
+        # 7. Convert to PRM States and add nodes to graph
+        states = [State(self.env.start_pos.from_flat(q), mode) for q in composite_traj]
+        g.add_skill_path(states, valid_next_modes)
+        
+        print(f"[DEBUG ROLLOUT] Successfully added {len(states)} protected nodes into Mode {mode.id}")
+        return True, valid_next_modes
         
     # TODO:
     # - Introduce mode_subset_to_sample
@@ -368,7 +390,7 @@ class CompositePRM(BasePlanner):
 
     # TODO (Liam) make changes in sample_valid_uniform_transitions()
     # [x] Intercept if task is a skill (simple print)
-    # [o] Intercetp if task is a skill & rollout skill 
+    # [x] Intercept if task is a skill & rollout skill 
     def sample_valid_uniform_transitions(
         self,
         g,
@@ -449,7 +471,18 @@ class CompositePRM(BasePlanner):
             # 2. Intercept if task is a skill
             if active_task and getattr(active_task, 'skill', None) is not None:
                 # print(f"[DEBUG SKILL] Intercepted skill for mode {mode.id}")
-                self.test_skill_rollout(g, mode, active_task)
+
+                # Run the rollout
+                success, valid_next_modes = self.test_skill_rollout(g, mode, active_task)
+                
+                if success:
+                    transitions += 1 
+                    if valid_next_modes:
+                        reached_modes.update(valid_next_modes)
+                else:
+                    failed_attemps += 1
+                    
+                continue # Skip the normal random geometric sampling (for now..)
 
             # TODO (Liam) rest unchanged
             # Step 2: sample a transition configuration in that mode
@@ -607,7 +640,7 @@ class CompositePRM(BasePlanner):
         return reached_modes
 
     # TODO (Liam) make changes in _prune()
-    # [o] Pruner shouldn't delete skill nodes 
+    # [x] Pruner shouldn't delete skill nodes 
     def _prune(self, g, current_best_cost):
         """
         Discards nodes that don't improve shorter path.
@@ -622,10 +655,9 @@ class CompositePRM(BasePlanner):
         for mode in list(g.nodes.keys()): # Avoid modifying dict while iterating
             original_count = len(g.nodes[mode])
             g.nodes[mode] = [
-                n
-                for n in g.nodes[mode]
-                if sum(self.env.batch_config_cost(n.state.q, focal_points))
-                <= current_best_cost
+                n for n in g.nodes[mode]
+                if getattr(n, "is_skill_waypoint", False) or
+                    sum(self.env.batch_config_cost(n.state.q, focal_points)) <= current_best_cost
             ]
             num_pts_for_removal += original_count - len(g.nodes[mode])
 
@@ -633,10 +665,9 @@ class CompositePRM(BasePlanner):
         for mode in list(g.transition_nodes.keys()):
             original_count = len(g.transition_nodes[mode])
             g.transition_nodes[mode] = [
-                n
-                for n in g.transition_nodes[mode]
-                if sum(self.env.batch_config_cost(n.state.q, focal_points))
-                <= current_best_cost
+                n for n in g.transition_nodes[mode]
+                if getattr(n, "is_skill_waypoint", False) or
+                    sum(self.env.batch_config_cost(n.state.q, focal_points)) <= current_best_cost
             ]
             num_pts_for_removal += original_count - len(g.transition_nodes[mode])
         
@@ -644,10 +675,9 @@ class CompositePRM(BasePlanner):
         for mode in list(g.reverse_transition_nodes.keys()):
             original_count = len(g.reverse_transition_nodes[mode])
             g.reverse_transition_nodes[mode] = [
-                n
-                for n in g.reverse_transition_nodes[mode]
-                if sum(self.env.batch_config_cost(n.state.q, focal_points))
-                <= current_best_cost
+                n for n in g.reverse_transition_nodes[mode]
+                if getattr(n, "is_skill_waypoint", False) or 
+                    sum(self.env.batch_config_cost(n.state.q, focal_points)) <= current_best_cost
             ]
 
         print(f"Removed {num_pts_for_removal} nodes")
