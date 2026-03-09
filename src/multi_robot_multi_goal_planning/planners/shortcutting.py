@@ -116,7 +116,7 @@ def robot_mode_shortcut(
     rr_robot = 0
 
     # TODO (Liam) Helper function to check if mode contains skill task for given robot
-    def mode_contains_skill(env: BaseProblem, mode: Mode, robot_index: int) -> bool:
+    def mode_contains_skill_for_robot(env: BaseProblem, mode: Mode, robot_index: int) -> bool:
         """
         Check if the mode corresponds to a skill task for the robot_index
         Need this helper function because global shortcutter has no other way knowing
@@ -156,12 +156,14 @@ def robot_mode_shortcut(
             if new_path[i].mode.task_ids[r] != new_path[j].mode.task_ids[r]:
                 can_shortcut_this = False
                 break
-            # TODO (Liam) Check if [i,j] are part of skill segment
+            # TODO (Liam) Check if [i,j] are part of skill segment (remove)
             # Check 2: do not touch any part of a skill trajectory  
-            for k in range(i, j+1):
-                if mode_contains_skill(env, new_path[k].mode, r):
-                    can_shortcut_this = False
-                    break
+            # for k in range(i, j+1):
+            #     if mode_contains_skill_for_robot(env, new_path[k].mode, r):
+            #         can_shortcut_this = False
+            #         break
+            if mode_contains_skill_for_robot(env, new_path[i].mode, r): # Either whole segment is or not a skill
+                can_shortcut_this = False
             if not can_shortcut_this:
                 # TODO (Liam) Stop checking further robots? (if multiple robots in list)
                 # Because we are doing joint shortcut (simultaneously for every robot in list)
