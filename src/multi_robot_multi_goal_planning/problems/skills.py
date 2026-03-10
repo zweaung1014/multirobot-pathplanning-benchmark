@@ -159,7 +159,9 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
     self.goal_pose = goal
     self.ee_name = ee_name
 
-  def step(self, q, env, dt=0.1):
+    self.scale_stepsize = False
+
+  def step(self, q, env, dt=1.):
     # get jacobian
     env.C.setJointState(q, self.joints)
 
@@ -173,6 +175,13 @@ class EEPoseGoalReaching(DeterministicBaseSkill):
 
     # compute pid law
     q_dot = np.linalg.pinv(jac) @ err
+
+    if self.scale_stepsize:
+      stepsize = np.linalg.norm(q_dot)
+      q_dir = q_dot / stepsize
+
+      if dt * stepsize > 1:
+        q_dot = q_dir
 
     # integrate to get next pos
     q_new = q - dt * q_dot

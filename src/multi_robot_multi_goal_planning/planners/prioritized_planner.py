@@ -1404,6 +1404,7 @@ def plan_in_time_space_bidirectional(
 
         if iter > 10000:
             print("Max iters in goal sampling.")
+            # env.C.view(True)
             return None
 
     # Start pose validation (check before expensive tree growth)
@@ -2001,6 +2002,8 @@ class PrioritizedPlanner(BasePlanner):
                 end_times,
                 env.collision_resolution,
             ):
+                # env.C.view(True)
+
                 return None, None # Failure makes outer loop try different sequence
 
         # Avoid shortcutting: taken care of in robot_mode_shortcut()    
@@ -2168,6 +2171,7 @@ class PrioritizedPlanner(BasePlanner):
                     )
                     if path is None:
                         logger.warn('Skill trajectory in collision, trying next sequence.')
+                        # env.C.view(True)
                         break
                         
                 else:
