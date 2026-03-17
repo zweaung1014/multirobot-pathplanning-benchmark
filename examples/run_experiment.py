@@ -40,6 +40,8 @@ from multi_robot_multi_goal_planning.planners import (
     BidirectionalRRTstar,
     InformedRRTstar,
     InformedRRTConfig,
+    HeuristicRRTstar,
+    HeuristicRRTConfig,
     BaseITConfig,
     AITstar,
     EITstar,
@@ -165,6 +167,17 @@ def setup_planner(
 
         def planner(env):
             return InformedRRTstar(env, config=config).plan(
+                ptc=RuntimeTerminationCondition(runtime),
+                optimize=optimize,
+            )
+    elif planner_config["type"] == "heuristic_rrtstar":
+        options = planner_config["options"]
+        config = HeuristicRRTConfig()
+        for k, v in options.items():
+            setattr(config, k, v)
+
+        def planner(env):
+            return HeuristicRRTstar(env, config=config).plan(
                 ptc=RuntimeTerminationCondition(runtime),
                 optimize=optimize,
             )

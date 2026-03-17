@@ -302,7 +302,8 @@ class rai_env(BaseProblem):
 
         self.C_cache = {}
 
-        self.C.view_recopyMeshes()
+        # Disabled: view_recopyMeshes() causes issues with internal RAI state for multimodal problems
+        # self.C.view_recopyMeshes()
 
         self.C_orig = ry.Config()
         self.C_orig.addConfigurationCopy(self.C)
@@ -401,12 +402,18 @@ class rai_env(BaseProblem):
         return batch_config_cost(starts, ends, self.cost_metric, self.cost_reduction, tmp_agent_slice=tmp_agent_slice)
 
     def show_config(self, q: Configuration, blocking: bool = True):
-        self.C.setJointState(q.state())
-        self.C.view(blocking)
+        try:
+            self.C.setJointState(q.state())
+            self.C.view(blocking)
+        except Exception as e:
+            print(f"[WARNING] Failed to show configuration: {e}")
 
     def show(self, blocking: bool = True):
         # self.C.view_close()
-        self.C.view(blocking)
+        try:
+            self.C.view(blocking)
+        except Exception as e:
+            print(f"[WARNING] Failed to show environment: {e}")
 
     # Environment functions: collision checking
     # @filter_output(hide_pair_collision)
@@ -796,10 +803,23 @@ class rai_env(BaseProblem):
             viewer = self.C.get_viewer()
             self.C_cache[m].set_viewer(viewer)
             # self.C_cache[m].computeCollisions()
-            try:
-                self.C_cache[m].view_recopyMeshes()
-            except:
-                pass
+            
+            # Disabled: view_recopyMeshes() causes issues with internal RAI state for multimodal problems
+            # try:
+            #     import os
+            #     # Suppress C++ error messages from view_recopyMeshes()
+            #     devnull = os.open(os.devnull, os.O_WRONLY)
+            #     old_stderr = os.dup(2)
+            #     os.dup2(devnull, 2)
+            #     try:
+            #         self.C_cache[m].view_recopyMeshes()
+            #     finally:
+            #         os.dup2(old_stderr, 2)
+            #         os.close(devnull)
+            #         os.close(old_stderr)
+            # except Exception:
+            #     pass
+            
             self.C = self.C_cache[m]
 
         else:
@@ -821,35 +841,51 @@ class rai_env(BaseProblem):
         stop_at_mode: bool = False,
     ) -> None:
         for i in range(len(path)):
-            self.set_to_mode(path[i].mode)
-            for k in range(len(self.robots)):
-                q = path[i].q[k]
-                self.C.setJointState(q, get_robot_joints(self.C, self.robots[k]))
+            try:
+                self.set_to_mode(path[i].mode)
+                for k in range(len(self.robots)):
+                    q = path[i].q[k]
+                    self.C.setJointState(q, get_robot_joints(self.C, self.robots[k]))
 
-                # print(q)
+                    # print(q)
 
-            if stop_at_mode and i < len(path) - 1:
-                if path[i].mode != path[i + 1].mode:
-                    print(i)
-                    print("Current mode:", path[i].mode)
-                    print("Next mode:", path[i + 1].mode)
-                    self.C.view(True)
+                if stop_at_mode and i < len(path) - 1:
+                    if path[i].mode != path[i + 1].mode:
+                        print(i)
+                        print("Current mode:", path[i].mode)
+                        print("Next mode:", path[i + 1].mode)
+                        try:
+                            self.C.view(True)
+                        except Exception as e:
+                            print(f"[WARNING] Failed to view configuration at mode switch: {e}")
 
-            self.C.view(stop)
+                try:
+                    self.C.view(stop)
+                except Exception as e:
+                    print(f"[WARNING] Failed to view configuration at step {i}: {e}")
 
-            if export:
-                os.makedirs("./z.vid", exist_ok=True)
-                self.C.view_savePng("./z.vid/")
+                if export:
+                    os.makedirs("./z.vid", exist_ok=True)
+                    try:
+                        self.C.view_savePng("./z.vid/")
+                    except Exception as e:
+                        print(f"[WARNING] Failed to export PNG at step {i}: {e}")
 
-            dt = pause_time
-            if adapt_to_max_distance:
-                if i < len(path) - 1:
-                    v = 5
-                    diff = config_dist(path[i].q, path[i + 1].q, "max_euclidean")
-                    dt = diff / v
-                    dt = max(dt, 0.01)
+                dt = pause_time
+                if adapt_to_max_distance:
+                    if i < len(path) - 1:
+                        v = 5
+                        diff = config_dist(path[i].q, path[i + 1].q, "max_euclidean")
+                        dt = diff / v
+                        dt = max(dt, 0.01)
 
-            time.sleep(dt)
+                time.sleep(dt)
+            except Exception as e:
+                print(f"[WARNING] Error displaying path at step {i}: {e}")
+                continue
 
         if stop_at_end:
-            self.C.view(True)
+            try:
+                self.C.view(True)
+            except Exception as e:
+                print(f"[WARNING] Failed to view final configuration: {e}")

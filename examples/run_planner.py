@@ -33,21 +33,23 @@ from multi_robot_multi_goal_planning.planners import (
     BidirectionalRRTstar,
     InformedRRTstar,
     InformedRRTConfig,
+    HeuristicRRTstar,
+    HeuristicRRTConfig,
     BaseITConfig,
     AITstar,
     EITstar,
     RecedingHorizonConfig,
     RecedingHorizonPlanner,
+    MAMPRRTStar,          # ← ADDED
+    MAMPRRTStarConfig,    # ← ADDED
 )
 
 from run_experiment import export_planner_data
 
 import logging
-# logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 def main():
-    # parser = argparse.ArgumentParser(description="Planner runner")
     parser = ArgumentParser(description="Planner runner")
 
     parser.add_argument("env", nargs="?", default="default", help="env to show")
@@ -72,9 +74,11 @@ def main():
             "rrt_star",
             "birrt_star",
             "informed_rrt_star",
+            "heuristic_rrt_star",
             "aitstar",
             "eitstar",
             "short_horizon",
+            "mamp_rrtstar",           # ← ADDED
         ],
         default="composite_prm",
         help="Planner to use (default: composite_prm)",
@@ -118,13 +122,15 @@ def main():
         help="Show some analytics plots. (default: False)",
     )
 
-    # Add planner-specific configs - this is the ONLY change needed!
-    parser.add_arguments(CompositePRMConfig, dest="composite_prm_config", prefix="prm.")
-    parser.add_arguments(BaseRRTConfig, dest="rrt_config", prefix="rrt.")
-    parser.add_arguments(InformedRRTConfig, dest="informed_rrt_config", prefix="irrt.")
-    parser.add_arguments(BaseITConfig, dest="it_config", prefix="it.")
+    # Planner-specific configs
+    parser.add_arguments(CompositePRMConfig,    dest="composite_prm_config", prefix="prm.")
+    parser.add_arguments(BaseRRTConfig,         dest="rrt_config",           prefix="rrt.")
+    parser.add_arguments(InformedRRTConfig,     dest="informed_rrt_config",  prefix="irrt.")
+    parser.add_arguments(HeuristicRRTConfig,    dest="heuristic_rrt_config", prefix="hrrt.")
+    parser.add_arguments(BaseITConfig,          dest="it_config",            prefix="it.")
     parser.add_arguments(PrioritizedPlannerConfig, dest="prioritized_config", prefix="prio.")
-    parser.add_arguments(RecedingHorizonConfig, dest="horizon_config", prefix="horizon.")
+    parser.add_arguments(RecedingHorizonConfig, dest="horizon_config",       prefix="horizon.")
+    parser.add_arguments(MAMPRRTStarConfig,     dest="mamp_config",          prefix="mamp.")  # ← ADDED
 
     args = parser.parse_args()
 
@@ -138,8 +144,6 @@ def main():
     env.cost_reduction = args.cost_reduction
     env.cost_metric = args.per_agent_cost_function
 
-    # env.show()
-
     termination_condition = None
     if args.num_iters is not None:
         termination_condition = IterationTerminationCondition(args.num_iters)
@@ -148,12 +152,9 @@ def main():
 
     assert termination_condition is not None
 
-    # env_copy = copy.deepcopy(env)
-
-    # Now just use the config objects directly!
     if args.planner == "composite_prm":
         config = args.composite_prm_config
-        config.distance_metric = args.distance_metric  # Override if needed
+        config.distance_metric = args.distance_metric
         planner = CompositePRM(env, config)
 
     elif args.planner == "rrt_star":
@@ -170,6 +171,11 @@ def main():
         config = args.informed_rrt_config
         config.distance_metric = args.distance_metric
         planner = InformedRRTstar(env, config=config)
+
+    elif args.planner == "heuristic_rrt_star":
+        config = args.heuristic_rrt_config
+        config.distance_metric = args.distance_metric
+        planner = HeuristicRRTstar(env, config=config)
 
     elif args.planner == "aitstar":
         config = args.it_config
@@ -189,6 +195,11 @@ def main():
         config = args.horizon_config
         planner = RecedingHorizonPlanner(env, config)
 
+    elif args.planner == "mamp_rrtstar":                          # ← ADDED BLOCK
+        config = args.mamp_config
+        config.distance_metric = args.distance_metric
+        planner = MAMPRRTStar(env, config=config)
+
     np.random.seed(args.seed + args.run_id)
     random.seed(args.seed + args.run_id)
 
@@ -196,28 +207,24 @@ def main():
 
     if args.save:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # convention: alsways use "/" as trailing character
         experiment_folder = f"./out/{timestamp}_{args.env}/"
-
-        # export_config(experiment_folder, config)
-
         if not os.path.isdir(experiment_folder):
             os.makedirs(experiment_folder)
-
         planner_folder = experiment_folder + args.planner + "/"
         export_planner_data(planner_folder, 0, info)
 
-    assert path is not None
+    if path is None or len(path) == 0:
+        print("[MAMP-RRT*] No solution found within time limit.")
+        if hasattr(env, "close"):
+            env.close()
+        return
 
     if args.insert_transition_nodes:
         path_w_doubled_modes = []
         for i in range(len(path)):
             path_w_doubled_modes.append(path[i])
-
             if i + 1 < len(path) and path[i].mode != path[i + 1].mode:
                 path_w_doubled_modes.append(State(path[i].q, path[i + 1].mode))
-
         path = path_w_doubled_modes
 
     print("robot-mode-shortcut")
@@ -292,7 +299,6 @@ def main():
         plt.legend()
 
         plt.figure()
-
         plt.plot(
             [pt.q[0][0] for pt in interpolated_path],
             [pt.q[0][1] for pt in interpolated_path],
@@ -303,7 +309,6 @@ def main():
             [pt.q[1][1] for pt in interpolated_path],
             "o-",
         )
-
         plt.plot(
             [pt.q[0][0] for pt in shortcut_discretized_path],
             [pt.q[0][1] for pt in shortcut_discretized_path],
@@ -314,12 +319,14 @@ def main():
             [pt.q[1][1] for pt in shortcut_discretized_path],
             "o--",
         )
-
         plt.show()
 
     print("displaying path from planner")
-    # display starting configuration to not run it immediately
-    env.show(blocking=True)
+    try:
+        env.show(blocking=False)  # Changed from blocking=True to avoid hanging in headless mode
+    except Exception as e:
+        print(f"Could not display visualization: {e}")
+    
     env.display_path(
         interpolated_path,
         stop=False,

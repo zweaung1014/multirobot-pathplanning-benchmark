@@ -134,10 +134,14 @@ class RRTstar(BaseRRTstar):
         ptc: PlannerTerminationCondition,
         optimize: bool = True,
     ) -> Tuple[List[State] | None, Dict[str, Any]]:
+        print("[PLAN] Starting planning...")
         i = 0
         self.initialize_planner()
+        print("[PLAN] Planner initialized successfully")
         while True:
             i += 1
+            if i % 1000 == 0:
+                print(f"[PLAN] Iteration {i}")
             # Mode selection
             active_mode = self.random_mode()
             # RRT* core

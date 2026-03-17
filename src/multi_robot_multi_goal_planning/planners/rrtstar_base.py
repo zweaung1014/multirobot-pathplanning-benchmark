@@ -606,7 +606,9 @@ class BaseRRTstar(BasePlanner):
             new_modes = self.env.get_next_modes(q, mode)
             new_modes = self.mode_validation.get_valid_modes(mode, tuple(new_modes))
             if new_modes == []:
-                self.modes = self.mode_validation.track_invalid_modes(mode, self.modes)
+                modes_set = set(self.modes) if not isinstance(self.modes, set) else self.modes
+                filtered_modes = self.mode_validation.track_invalid_modes(mode, modes_set)
+                self.modes = list(filtered_modes) if isinstance(filtered_modes, set) else filtered_modes
             self.save_tree_data()
 
         for new_mode in new_modes:
@@ -659,7 +661,9 @@ class BaseRRTstar(BasePlanner):
         next_modes = self.env.get_next_modes(n.state.q, mode)
         next_modes = self.mode_validation.get_valid_modes(mode, tuple(next_modes))
         if next_modes == []:
-            self.modes = self.mode_validation.track_invalid_modes(mode, self.modes)
+            modes_set = set(self.modes) if not isinstance(self.modes, set) else self.modes
+            filtered_modes = self.mode_validation.track_invalid_modes(mode, modes_set)
+            self.modes = list(filtered_modes) if isinstance(filtered_modes, set) else filtered_modes
 
         for next_mode in next_modes:
             if next_mode not in self.modes:
@@ -899,9 +903,11 @@ class BaseRRTstar(BasePlanner):
                 if self.config.with_mode_validation:
                     self.modes.remove(mode)
                     self.mode_validation.add_invalid_mode(mode)
-                    self.modes = self.mode_validation.track_invalid_modes(
-                        mode.prev_mode, self.modes
+                    modes_set = set(self.modes) if not isinstance(self.modes, set) else self.modes
+                    filtered_modes = self.mode_validation.track_invalid_modes(
+                        mode.prev_mode, modes_set
                     )
+                    self.modes = list(filtered_modes) if isinstance(filtered_modes, set) else filtered_modes
                 else:
                     self.blacklist_mode.add(mode)
                     self.modes.remove(mode)
@@ -984,7 +990,8 @@ class BaseRRTstar(BasePlanner):
             if random.choice([0, 1]) == 0:
                 return q
 
-            while True:
+            noise_attempts = 0
+            while noise_attempts < 100:
                 q_noise = []
                 for r in range(len(self.env.robots)):
                     q_robot = q.robot_state(r)
@@ -993,14 +1000,16 @@ class BaseRRTstar(BasePlanner):
                 q = type(self.env.get_start_pos()).from_list(q_noise)
                 if self.env.is_collision_free(q, mode):
                     return q
+                noise_attempts += 1
 
     def _sample_uniform(self, mode: Mode):
-        while True:
+        for attempt in range(500):
             q = self.env.sample_config_uniform_in_limits()
 
             if self.env.is_collision_free(q, mode):
                 return q
             # self.env.show(False)
+        return None
 
     def sample_informed(
         self,

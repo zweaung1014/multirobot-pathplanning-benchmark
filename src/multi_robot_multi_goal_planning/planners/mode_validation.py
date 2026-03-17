@@ -151,11 +151,19 @@ class ModeValidation:
 
         invalid_next_modes = self.invalid_next_ids.get(mode, set())
 
-        while True:
-            next_task = random.choice(possible_next_task_combinations)
-            if tuple(next_task) in invalid_next_modes:
-                continue
-            return next_task
+        # Filter to only valid combinations
+        valid_combinations = [
+            task for task in possible_next_task_combinations
+            if tuple(task) not in invalid_next_modes
+        ]
+
+        if not valid_combinations:
+            # All combinations are invalid, mark this mode as invalid
+            if not self.env.is_terminal_mode(mode):
+                _ = self.track_invalid_modes(mode)
+            return None
+
+        return random.choice(valid_combinations)
 
     def add_invalid_mode(self, mode: Mode) -> None:
         """
@@ -186,7 +194,7 @@ class ModeValidation:
 
     # TODO: split in adding to blacklist, and removing from the list
     def track_invalid_modes(
-        self, mode: Mode, modes: Set[Mode] = set()
+        self, mode: Mode, modes: Set[Mode] | None = None
     ) -> Set[Mode]:
         """
         Tracks invalid modes by adding them to blacklist and removing them from the list.
@@ -197,13 +205,17 @@ class ModeValidation:
         Returns:
             modes: The filtered mode ist
         """
+        if modes is None:
+            modes = set()
+        
         if not self.apply:
             return modes
 
         # we go backwards from the current mode, and add all the modes that do not have valid follow up modes/task ids
         while True:
-            # if mode == self.env.start_mode:
-            #     break
+            # Check if we've reached the start mode before trying to invalidate it
+            if mode == self.env.start_mode:
+                break
 
             invalid_next_ids = self.invalid_next_ids.get(mode, set())
             possible_next_task_combinations = self.env.get_valid_next_task_combinations(
@@ -216,8 +228,6 @@ class ModeValidation:
                 break
             modes.remove(mode)
             self.add_invalid_mode(mode)
-            if mode == self.env.start_mode:
-                break
             mode = mode.prev_mode
 
         return modes

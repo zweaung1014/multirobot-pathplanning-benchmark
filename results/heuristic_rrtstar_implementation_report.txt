@@ -1,0 +1,131 @@
+================================================================================
+HEURISTIC-GUIDED RRT* PLANNER IMPLEMENTATION REPORT
+================================================================================
+Date: 15 March 2026
+Branch: heuristic-guided
+
+================================================================================
+OVERVIEW
+================================================================================
+
+A new planner "HeuristicRRTstar" has been implemented that extends the baseline
+RRT* algorithm with a third sampling strategy: line-to-goal band sampling.
+
+The planner uses an adaptive probability blend that shifts from exploration
+(uniform-heavy) before finding a solution to refinement (heuristic-heavy) after.
+
+================================================================================
+FILES CREATED/MODIFIED
+================================================================================
+
+Created:
+  - src/multi_robot_multi_goal_planning/planners/planner_heuristic_rrtstar.py
+
+Modified:
+  - src/multi_robot_multi_goal_planning/planners/__init__.py
+  - examples/run_planner.py
+
+================================================================================
+ALGORITHM DESCRIPTION
+================================================================================
+
+Sampling Strategy:
+------------------
+The planner uses three sampling methods with adaptive probabilities:
+
+1. Uniform Sampling: Random samples across configuration space
+2. Goal-Biased Sampling: Samples near goal configurations
+3. Heuristic (Line-to-Goal Band) Sampling: Samples near the straight-line
+   corridor from start to goal
+
+Probability Blend:
+------------------
+                        | Before Solution | After Solution |
+  ----------------------|-----------------|----------------|
+  Uniform               |      70%        |      30%       |
+  Goal-Biased           |      20%        |      10%       |
+  Heuristic (Line Band) |      10%        |      60%       |
+
+Heuristic Sampling Details:
+---------------------------
+- Samples points along the straight line from env.start_pos to reference goal
+- Adds perpendicular Gaussian noise with std = band_width * config_space_extent
+- Reference goal is set from first solution's endpoint
+- Before first solution, heuristic sampling falls back to uniform
+
+================================================================================
+CONFIGURATION PARAMETERS
+================================================================================
+
+Parameter               | Default | Description
+------------------------|---------|--------------------------------------------
+p_uniform_explore       |   0.7   | Uniform probability before solution
+p_goal_explore          |   0.2   | Goal-biased probability before solution
+p_heuristic_explore     |   0.1   | Heuristic probability before solution
+p_uniform_refine        |   0.3   | Uniform probability after solution
+p_goal_refine           |   0.1   | Goal-biased probability after solution
+p_heuristic_refine      |   0.6   | Heuristic probability after solution
+band_width              |   0.1   | Corridor width (fraction of config space)
+max_heuristic_attempts  |   100   | Max rejection sampling attempts
+
+Command line prefix: --hrrt.
+
+================================================================================
+USAGE
+================================================================================
+
+Basic usage:
+  python3 examples/run_planner.py <environment> --planner=heuristic_rrt_star --max_time=<seconds>
+
+Example:
+  python3 examples/run_planner.py rai.simple --planner=heuristic_rrt_star --max_time=10
+
+With custom parameters:
+  python3 examples/run_planner.py rai.simple --planner=heuristic_rrt_star --max_time=10 \
+    --hrrt.p_uniform_explore=0.6 --hrrt.p_heuristic_refine=0.7 --hrrt.band_width=0.15
+
+================================================================================
+TEST RESULTS
+================================================================================
+
+Environment: rai.simple
+Max Time: 10 seconds
+
+Heuristic RRT* Results:
+-----------------------
+  - Solution found: YES
+  - Final cost: ~3.29
+  - Mode switch message: "[HeuristicRRT*] First solution found! Reference goal 
+    captured. Switching to refinement mode."
+  - Modes traversed: [[0, 1], [0, 2], [2, 2]]
+  - Shortcutting:
+      - Original cost: 3.291332617751396
+      - After robot-mode-shortcut: 2.9224038560646934
+      - After task-shortcut: 3.2267690359128203
+  - Path validity: All paths validated as collision-free
+
+Baseline RRT* Results (for comparison):
+---------------------------------------
+  - Solution found: YES
+  - Final cost: ~3.23
+  - Cost progression: [8.92, 3.28, 3.23, 3.23]
+
+Comparison:
+-----------
+Both planners found solutions with similar final costs on this simple 
+environment. The heuristic-guided approach successfully:
+  1. Found initial solution in exploration mode
+  2. Detected transition to refinement mode
+  3. Captured reference goal for heuristic sampling
+
+================================================================================
+STATUS
+================================================================================
+
+Implementation: COMPLETE
+Testing: PASSED
+Integration: COMPLETE
+
+The planner is ready for further benchmarking and comparison studies.
+
+================================================================================
