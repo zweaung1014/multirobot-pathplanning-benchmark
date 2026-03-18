@@ -88,8 +88,8 @@ class MAMPRRTStarConfig(BaseRRTConfig):
     bootstrap_goal_frac: float = 0.06
 
     # Cheap local reuse of successful bootstrap targets.
-    goal_seed_bias: float = 0.45
-    goal_seed_sigma: float = 0.06
+    goal_seed_bias: float = 0.15
+    goal_seed_sigma: float = 0.20
     max_goal_seeds_per_mode: int = 64
 
     # Cheap local reuse of discovered transition nodes.
@@ -100,15 +100,15 @@ class MAMPRRTStarConfig(BaseRRTConfig):
     explore_local_frac: float = 0.55
 
     # Phase 2 -> 3 switch rule.
-    near_optimal_ratio: float = 0.05
+    near_optimal_ratio: float = 0.20
 
     # Path tube parameters.
     tube_sigma_init: float = 0.15
     tube_decay: float = 0.995
 
     # Mixture fractions.
-    p2_ellipsoid_frac: float = 0.70
-    p3_tube_frac: float = 0.90
+    p2_ellipsoid_frac: float = 0.85
+    p3_tube_frac: float = 0.95
 
     # Stagnation fallback.
     stagnation_window: int = 200
@@ -414,29 +414,28 @@ class MAMPRRTStar(RRTstar):
     # -------------------------------------------------------------------------
     # Override: sample_configuration
     # -------------------------------------------------------------------------
+def sample_configuration(self, mode: Mode) -> Optional[Configuration]:
+    if mode not in self.modes:
+        return None
 
-    def sample_configuration(self, mode: Mode) -> Optional[Configuration]:
-        if mode not in self.modes:
-            return None
+    phase = self._phase.get(mode, self._EXPLORE)
 
-        phase = self._phase.get(mode, self._EXPLORE)
-
-        # 1. Very strong cheap bias near already-discovered transition nodes.
+    # ----------------------------
+    # BEFORE FIRST SOLUTION
+    # ----------------------------
+    if not self.operation.init_sol:
         if self.transition_node_ids.get(mode) and np.random.random() < self._transition_node_bias:
             q = self._sample_transition_node_bias(mode)
             if q is not None:
                 self._stats["transition_bias"] += 1
                 return q
 
-        # 2. Cheap bias near cached successful goal seeds.
         if self._has_goal_seeds(mode) and np.random.random() < self._goal_seed_bias:
             q = self._sample_goal_seed_bias(mode)
             if q is not None:
                 self._stats["goal_seed"] += 1
                 return q
 
-        # 3. Sparse expensive bootstrap before first solution, only if we still
-        #    do not have enough cheap local guidance.
         bootstrap_frac = self._current_bootstrap_frac(mode)
         if bootstrap_frac > 0.0 and np.random.random() < bootstrap_frac:
             q = self._sample_bootstrap_goal(mode)
@@ -444,109 +443,75 @@ class MAMPRRTStar(RRTstar):
                 self._stats["bootstrap_goal"] += 1
                 return q
 
-        # 4. Phase-specific fallback sampler.
-        if phase == self._EXPLORE:
-            # Once we have any cached seeds at all, spend extra effort near them.
-            if self._has_goal_seeds(mode) and np.random.random() < self._explore_local_frac:
-                q = self._sample_goal_seed_bias(mode)
-                if q is not None:
-                    self._stats["goal_seed"] += 1
-                    return q
+        self._stats["uniform"] += 1
+        return self._sample_uniform(mode)
 
-            self._stats["uniform"] += 1
-            return self._sample_uniform(mode)
+    # ----------------------------
+    # AFTER FIRST SOLUTION
+    # Use actual MAMP phase sampler first
+    # ----------------------------
+    if phase == self._EXPLORE:
+        if self._has_goal_seeds(mode) and np.random.random() < 0.20:
+            q = self._sample_goal_seed_bias(mode)
+            if q is not None:
+                self._stats["goal_seed"] += 1
+                return q
 
-        if phase == self._INFORMED:
-            if np.random.random() < self._p2_ell:
-                q = self._sample_ellipsoid(mode)
-                if q is not None:
-                    self._stats["ellipsoid"] += 1
-                    return q
-
-            if self._has_goal_seeds(mode):
-                q = self._sample_goal_seed_bias(mode)
-                if q is not None:
-                    self._stats["goal_seed"] += 1
-                    return q
-
-            self._stats["uniform"] += 1
-            return self._sample_uniform(mode)
-
-        if phase == self._EXPLOIT:
-            if np.random.random() < self._p3_tube:
-                q = self._sample_path_tube(mode)
-                if q is not None:
-                    self._stats["path_tube"] += 1
-                    return q
-
-            if self._has_goal_seeds(mode):
-                q = self._sample_goal_seed_bias(mode)
-                if q is not None:
-                    self._stats["goal_seed"] += 1
-                    return q
-
-            self._stats["uniform"] += 1
-            return self._sample_uniform(mode)
+        if self.transition_node_ids.get(mode) and np.random.random() < 0.20:
+            q = self._sample_transition_node_bias(mode)
+            if q is not None:
+                self._stats["transition_bias"] += 1
+                return q
 
         self._stats["uniform"] += 1
         return self._sample_uniform(mode)
 
-    def _sample_ellipsoid(self, mode: Mode) -> Optional[Configuration]:
-        mode_states = self._mode_segment_states.get(mode)
-        mode_cost = self._mode_segment_cost.get(mode, math.inf)
-
-        if not mode_states or len(mode_states) < 2:
-            return None
-
-        a = mode_states[0].q.state()
-        b = mode_states[-1].q.state()
-        c_min = float(np.linalg.norm(b - a))
-        c = mode_cost
-
-        if c_min < 1e-9 or c <= c_min:
-            return None
-
-        try:
-            rot, center = compute_PHS_matrices(a, b, c)
-            lims = self.env.limits
-            template = self.env.get_start_pos()
-        except Exception:
-            return None
-
-        if lims.shape[1] != len(a):
-            return None
-
-        for _ in range(50):
-            sample = sample_phs_with_given_matrices(rot, center, n=1)
-            q_flat = sample[:, 0]
-            if len(q_flat) != lims.shape[1]:
-                continue
-            if np.any(q_flat < lims[0]) or np.any(q_flat > lims[1]):
-                continue
-            try:
-                q = template.from_flat(q_flat)
-            except Exception:
-                continue
-            if self.env.is_collision_free(q, mode):
+    if phase == self._INFORMED:
+        if np.random.random() < self._p2_ell:
+            q = self._sample_ellipsoid(mode)
+            if q is not None:
+                self._stats["ellipsoid"] += 1
                 return q
 
-        return None
+        if self._has_goal_seeds(mode) and np.random.random() < 0.15:
+            q = self._sample_goal_seed_bias(mode)
+            if q is not None:
+                self._stats["goal_seed"] += 1
+                return q
 
-    def _sample_path_tube(self, mode: Mode) -> Optional[Configuration]:
-        mode_states = self._mode_segment_states.get(mode)
-        if not mode_states:
-            return None
+        if self.transition_node_ids.get(mode) and np.random.random() < 0.15:
+            q = self._sample_transition_node_bias(mode)
+            if q is not None:
+                self._stats["transition_bias"] += 1
+                return q
 
-        anchor_q = random.choice(mode_states).q.state()
-        n_dim = len(anchor_q)
-        sigma = self._tube_r.get(mode, self._tube_init) / math.sqrt(max(n_dim, 1))
+        self._stats["uniform"] += 1
+        return self._sample_uniform(mode)
 
-        return self._sample_near_vector(
-            center=anchor_q,
-            mode=mode,
-            sigma=sigma,
-            max_tries=25,
-        )
+    if phase == self._EXPLOIT:
+        if np.random.random() < self._p3_tube:
+            q = self._sample_path_tube(mode)
+            if q is not None:
+                self._stats["path_tube"] += 1
+                return q
+
+        if self._has_goal_seeds(mode) and np.random.random() < 0.10:
+            q = self._sample_goal_seed_bias(mode)
+            if q is not None:
+                self._stats["goal_seed"] += 1
+                return q
+
+        if self.transition_node_ids.get(mode) and np.random.random() < 0.10:
+            q = self._sample_transition_node_bias(mode)
+            if q is not None:
+                self._stats["transition_bias"] += 1
+                return q
+
+        self._stats["uniform"] += 1
+        return self._sample_uniform(mode)
+
+    self._stats["uniform"] += 1
+    return self._sample_uniform(mode)
 
     # -------------------------------------------------------------------------
     # Override: manage_transition
