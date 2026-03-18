@@ -1,0 +1,22 @@
+Algorithm 2: T = (V, E) <- RRT*Smart(z_init)
+
+1  T <- InitializeTree();
+2  T <- InsertNode(∅, z_init, T);
+3  for i = 0 to i = N do
+4      if i = n+b, n+2b, n+3b.... then
+5          z_rand <- Sample(i, z_beacons);
+6      else
+7          z_rand <- Sample(i);
+8      z_nearest <- Nearest(T, z_rand);
+9      (x_new, u_new, T_new) <- Steer(z_nearest, z_rand);
+10     if Obstaclefree(x_new) then
+11         Z_near <- Near(T, z_new, |V|);
+12         z_min <- Chooseparent(Z_near, z_nearest, z_new, x_new);
+13         T <- InsertNode(z_min, z_new, T);
+14         T <- Rewire(T, Z_near, z_min, z_new);
+15         if InitialPathFound then
+16             n <- i;
+17             (T, directcost) <- PathOptimization(T, z_init, z_goal);
+18             if (directcost_new < directcost_old)
+19                 z_beacons <- PathOptimization(T, z_init, z_goal);
+20 return T

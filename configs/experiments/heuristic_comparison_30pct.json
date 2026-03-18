@@ -1,0 +1,26 @@
+{
+    "experiment_name": "heuristic_comparison_30pct",
+    "environment": "rai.simple",
+    "per_agent_cost": "euclidean",
+    "cost_reduction": "max",
+    "max_planning_time": 10,
+    "optimize": true,
+    "num_runs": 100,
+    "seed": 42,
+    "planners": [
+        {
+            "name": "rrtstar_baseline",
+            "type": "rrtstar",
+            "options": {}
+        },
+        {
+            "name": "heuristic_rrtstar",
+            "type": "heuristic_rrtstar",
+            "options": {
+                "p_uniform_refine": 0.6,
+                "p_goal_refine": 0.1,
+                "p_heuristic_refine": 0.3
+            }
+        }
+    ]
+}

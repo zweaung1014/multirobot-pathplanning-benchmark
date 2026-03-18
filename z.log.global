@@ -1,5 +1,5 @@
 ** compiled at:     Mar  7 2025 12:45:51
-** execution start: 2026-03-15 12:45:49:7503
+** execution start: 2026-03-15 16:09:38:1008
 graph.cpp:initParameters:1511(3) opening config file 'rai.cfg'
 graph.cpp:initParameters:1518(3)  - failed
 graph.cpp:initParameters:1524(3) opening base config file '/root/local/rai/../local.cfg'
@@ -190,8 +190,12 @@ pairCollision.cpp:libccd:365(0) WARNING: called MPR penetration for non intersec
 pairCollision.cpp:libccd:370(0) WARNING: but GJK says intersection
 pairCollision.cpp:libccd:365(0) WARNING: called MPR penetration for non intersecting meshes...
 pairCollision.cpp:libccd:370(0) WARNING: but GJK says intersection
-** execution stop: 2026-03-15 13:19:36:579345
-** real time: 2027.57sec
-** CPU time: 2031.08
+pairCollision.cpp:libccd:365(0) WARNING: called MPR penetration for non intersecting meshes...
+pairCollision.cpp:libccd:370(0) WARNING: but GJK says intersection
+pairCollision.cpp:libccd:365(0) WARNING: called MPR penetration for non intersecting meshes...
+pairCollision.cpp:libccd:370(0) WARNING: but GJK says intersection
+** execution stop: 2026-03-15 16:26:34:48311
+** real time: 1016.05sec
+** CPU time: 7.7895
 
 ** set+queried params:
