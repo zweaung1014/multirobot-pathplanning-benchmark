@@ -4,6 +4,7 @@ from .planner_rrtstar import RRTstar
 from .planner_birrtstar import BidirectionalRRTstar
 from .planner_informed_rrtstar import InformedRRTstar, InformedRRTConfig
 from .planner_heuristic_rrtstar import HeuristicRRTstar, HeuristicRRTConfig
+from .planner_beacon_rrtstar import BeaconRRTstar, BeaconRRTConfig
 from .itstar_base import BaseITConfig
 from .planner_aitstar import AITstar
 from .planner_eitstar import EITstar
@@ -21,6 +22,8 @@ __all__ = [
     "InformedRRTConfig",
     "HeuristicRRTstar",
     "HeuristicRRTConfig",
+    "BeaconRRTstar",
+    "BeaconRRTConfig",
     "BaseITConfig",
     "AITstar",
     "EITstar",

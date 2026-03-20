@@ -35,6 +35,8 @@ from multi_robot_multi_goal_planning.planners import (
     InformedRRTConfig,
     HeuristicRRTstar,
     HeuristicRRTConfig,
+    BeaconRRTstar,
+    BeaconRRTConfig,
     BaseITConfig,
     AITstar,
     EITstar,
@@ -75,6 +77,7 @@ def main():
             "birrt_star",
             "informed_rrt_star",
             "heuristic_rrt_star",
+            "beacon_rrt_star",
             "aitstar",
             "eitstar",
             "short_horizon",
@@ -126,6 +129,7 @@ def main():
     parser.add_arguments(BaseRRTConfig, dest="rrt_config", prefix="rrt.")
     parser.add_arguments(InformedRRTConfig, dest="informed_rrt_config", prefix="irrt.")
     parser.add_arguments(HeuristicRRTConfig, dest="heuristic_rrt_config", prefix="hrrt.")
+    parser.add_arguments(BeaconRRTConfig, dest="beacon_rrt_config", prefix="brrt.")
     parser.add_arguments(BaseITConfig, dest="it_config", prefix="it.")
     parser.add_arguments(PrioritizedPlannerConfig, dest="prioritized_config", prefix="prio.")
     parser.add_arguments(RecedingHorizonConfig, dest="horizon_config", prefix="horizon.")
@@ -179,6 +183,11 @@ def main():
         config = args.heuristic_rrt_config
         config.distance_metric = args.distance_metric
         planner = HeuristicRRTstar(env, config=config)
+
+    elif args.planner == "beacon_rrt_star":
+        config = args.beacon_rrt_config
+        config.distance_metric = args.distance_metric
+        planner = BeaconRRTstar(env, config=config)
 
     elif args.planner == "aitstar":
         config = args.it_config

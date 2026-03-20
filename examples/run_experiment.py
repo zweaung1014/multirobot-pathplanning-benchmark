@@ -42,6 +42,8 @@ from multi_robot_multi_goal_planning.planners import (
     InformedRRTConfig,
     HeuristicRRTstar,
     HeuristicRRTConfig,
+    BeaconRRTstar,
+    BeaconRRTConfig,
     BaseITConfig,
     AITstar,
     EITstar,
@@ -178,6 +180,17 @@ def setup_planner(
 
         def planner(env):
             return HeuristicRRTstar(env, config=config).plan(
+                ptc=RuntimeTerminationCondition(runtime),
+                optimize=optimize,
+            )
+    elif planner_config["type"] == "beacon_rrtstar":
+        options = planner_config["options"]
+        config = BeaconRRTConfig()
+        for k, v in options.items():
+            setattr(config, k, v)
+
+        def planner(env):
+            return BeaconRRTstar(env, config=config).plan(
                 ptc=RuntimeTerminationCondition(runtime),
                 optimize=optimize,
             )
